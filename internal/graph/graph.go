@@ -135,9 +135,14 @@ func (s *Store) Related(ctx context.Context, fromColl, fromKey, edgeType string,
 // by replaying the whole edge collection (event.Store.ReplayAsOf) and
 // filtering in Go. More expensive than Related; see docs/adr/BACKLOG.md
 // §2/§3 for the scaling trigger this and FIND ... AS OF share.
-func (s *Store) RelatedAsOf(ctx context.Context, fromColl, fromKey, edgeType string, asOf time.Time, limit int) ([]Edge, error) {
+//
+// validAt is a valid-time (business time) point, matching TQL's AS OF
+// (internal/tql's execRelated) — the tx_time cutoff passed to ReplayAsOf
+// stays unbounded, so this never excludes an edge solely because it was
+// committed "too recently" relative to validAt.
+func (s *Store) RelatedAsOf(ctx context.Context, fromColl, fromKey, edgeType string, validAt time.Time, limit int) ([]Edge, error) {
 	from := path(fromColl, fromKey)
-	events, err := s.events.ReplayAsOf(ctx, EdgeCollection, asOf, asOf)
+	events, err := s.events.ReplayAsOf(ctx, EdgeCollection, time.Time{}, validAt)
 	if err != nil {
 		return nil, fmt.Errorf("graph: related as of %s: %w", from, err)
 	}

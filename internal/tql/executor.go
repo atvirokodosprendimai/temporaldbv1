@@ -97,7 +97,14 @@ func (ex *Executor) execGet(ctx context.Context, s *GetStmt) (Result, error) {
 	var e *temporal.Event
 	var err error
 	if s.AsOf != nil {
-		e, err = ex.Events.AsOf(ctx, s.Collection, s.Key, *s.AsOf, *s.AsOf)
+		// TQL's single AS OF clause is a valid-time (business time) query:
+		// asOf (the tx_time cutoff) stays zero/unbounded - everything ever
+		// committed is eligible - and *s.AsOf selects which valid-time
+		// version applies. Passing *s.AsOf for BOTH used to also exclude
+		// any version committed after that instant, which for a backdated
+		// write (PUT ... AT <past time>, committed today) silently excluded
+		// everything: found live during README verification.
+		e, err = ex.Events.AsOf(ctx, s.Collection, s.Key, time.Time{}, *s.AsOf)
 	} else {
 		e, err = ex.Events.Get(ctx, s.Collection, s.Key)
 	}
@@ -167,7 +174,8 @@ func (ex *Executor) execFind(ctx context.Context, s *FindStmt) (Result, error) {
 }
 
 func (ex *Executor) execFindAsOf(ctx context.Context, s *FindStmt) (Result, error) {
-	events, err := ex.Events.ReplayAsOf(ctx, s.Collection, *s.AsOf, *s.AsOf)
+	// asOf stays unbounded; *s.AsOf is the valid-time point - see execGet.
+	events, err := ex.Events.ReplayAsOf(ctx, s.Collection, time.Time{}, *s.AsOf)
 	if err != nil {
 		return Result{}, err
 	}

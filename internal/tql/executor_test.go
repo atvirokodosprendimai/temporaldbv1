@@ -114,6 +114,51 @@ func TestExecFindDeletedExcluded(t *testing.T) {
 	}
 }
 
+// TestExecGetAsOfIsValidTimeNotTxTime is a regression test for a real bug
+// found via manual verification (not by the rest of this suite, which
+// never exercised a write whose valid_from differs from its real tx_time):
+// GET ... AS OF was passing the same instant for both temporal.Visible
+// parameters, so AS OF a past business date silently returned nothing
+// whenever the write itself had been committed more recently (the normal
+// case for any backdated PUT ... AT). AS OF must mean "valid at this
+// business time, using everything committed so far" - never "and also
+// pretend nothing committed after this instant."
+func TestExecGetAsOfIsValidTimeNotTxTime(t *testing.T) {
+	ex := newExecutor(t, nil)
+	ctx := context.Background()
+
+	// Both PUTs commit for real "now" (tx_time), but are backdated into
+	// the business past via AT - so valid_from is far from tx_time,
+	// exactly the case the conflated bug masked.
+	jan := &PutStmt{Collection: "users", Key: "1", Value: []byte(`{"v":1}`), At: timePtr(t, "2020-01-01T00:00:00Z")}
+	jun := &PutStmt{Collection: "users", Key: "1", Value: []byte(`{"v":2}`), At: timePtr(t, "2020-06-01T00:00:00Z")}
+	if _, err := ex.Exec(ctx, jan); err != nil {
+		t.Fatalf("put jan: %v", err)
+	}
+	if _, err := ex.Exec(ctx, jun); err != nil {
+		t.Fatalf("put jun: %v", err)
+	}
+
+	get := &GetStmt{Collection: "users", Key: "1", AsOf: timePtr(t, "2020-03-01T00:00:00Z")}
+	res, err := ex.Exec(ctx, get)
+	if err != nil {
+		t.Fatalf("GET AS OF: %v", err)
+	}
+	if len(res.Rows) != 1 || string(res.Rows[0].Value) != `{"v":1}` {
+		t.Fatalf("GET AS OF 2020-03-01 = %+v, want the January version (v1) - "+
+			"both writes committed today, so a tx_time-cutoff bug returns nothing", res.Rows)
+	}
+}
+
+func timePtr(t *testing.T, s string) *time.Time {
+	t.Helper()
+	tm, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatalf("parse %q: %v", s, err)
+	}
+	return &tm
+}
+
 func TestExecFindAsOfUsesGoSidePath(t *testing.T) {
 	ex := newExecutor(t, nil)
 	stmt1, _ := Parse(`PUT users/1 {"v":1}`)

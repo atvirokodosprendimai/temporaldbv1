@@ -183,8 +183,26 @@ Visibility is decided by **one function**, `internal/temporal.Visible(events []E
 validAt time.Time) (Event, bool)`, never re-implemented at a call site. Intervals are half-open
 `[valid_from, next valid_from)` per key — chosen deliberately, not defaulted into — and every
 comparison uses `time.Time.Compare`, never a formatted-string or date-truncated comparison. `GET`/
-`FIND` without a time qualifier reads `live` directly (the fast path); `AS OF`/`VALID AT` queries
-replay `events` filtered to `seq`s at-or-before the requested instant, last-write-wins per key.
+`FIND` without a time qualifier reads `live` directly (the fast path); `AS OF` replays `events`
+last-write-wins per key.
+
+**Correction (implementation, 2026-09-03): TQL exposes only the valid-time axis.** This section
+originally implied `AS OF`/`VALID AT` were two separate TQL query forms, one per axis. TQL's
+grammar (D4) has a single `AS OF <time>` clause, and the first implementation passed that one
+instant as **both** `Visible` parameters — which silently broke the ordinary case: `PUT ... AT
+<past date>` commits for real "now" but is valid from the past, so `asOf=validAt=<past date>`
+excluded the write entirely (its `tx_time` is after the cutoff), and `GET ... AS OF <that date>`
+returned nothing. Found via the README tutorial's own worked example, not by the test suite —
+every prior AS-OF/RELATED-AS-OF test happened to write with `valid_from == tx_time` (no `AT`), so
+the two parameters were never actually different and the bug had no test that could see it.
+
+**The fix, and what "AS OF" means in TQL v1:** `asOf` (the `tx_time` cutoff) stays zero/unbounded —
+"as of" always considers everything committed so far — and the given instant is `validAt` only.
+TQL's `AS OF` is therefore a **valid-time** (business-time) query: "what was true then," not "what
+had the system recorded by then." A true transaction-time/audit query (bound `asOf`, unbounded
+`validAt`) is not exposed by any TQL verb in v1 — `internal/temporal.Visible` still supports it for
+a caller working directly in Go, but nothing in the original ask calls for a "what did the database
+believe" audit query, only for time travel over the data itself.
 
 ### D4 — Query language: TQL (Temporal Query Language)
 
