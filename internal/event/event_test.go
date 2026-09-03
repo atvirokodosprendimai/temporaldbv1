@@ -60,6 +60,27 @@ func TestAppendDeleteThenGet(t *testing.T) {
 	}
 }
 
+func TestGetPreservesMeta(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	_, err := s.Append(ctx, "users", "1", temporal.OpPut, json.RawMessage(`{}`), json.RawMessage(`{"from":"a","type":"knows","to":"b"}`), time.Time{})
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	got, err := s.Get(ctx, "users", "1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("Get returned nil")
+	}
+	if string(got.Meta) != `{"from":"a","type":"knows","to":"b"}` {
+		t.Errorf("Meta = %s, want the meta passed to Append (live must carry meta, not just events)", got.Meta)
+	}
+}
+
 func TestGetMissingKey(t *testing.T) {
 	s := newStore(t)
 	got, err := s.Get(context.Background(), "users", "does-not-exist")
@@ -195,5 +216,45 @@ func TestAppendConcurrentDistinctKeys(t *testing.T) {
 		if err != nil || got == nil {
 			t.Fatalf("Get(k%d) = %v, %v", i, got, err)
 		}
+	}
+}
+
+func TestReplayAsOfExcludesDeletedAndPicksVisibleVersion(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+
+	if _, err := s.Append(ctx, "users", "1", temporal.OpPut, json.RawMessage(`{"v":1}`), nil, t1); err != nil {
+		t.Fatalf("Append users/1 v1: %v", err)
+	}
+	if _, err := s.Append(ctx, "users", "1", temporal.OpPut, json.RawMessage(`{"v":2}`), nil, t2); err != nil {
+		t.Fatalf("Append users/1 v2: %v", err)
+	}
+	if _, err := s.Append(ctx, "users", "2", temporal.OpPut, json.RawMessage(`{"v":1}`), nil, t1); err != nil {
+		t.Fatalf("Append users/2: %v", err)
+	}
+	if _, err := s.Append(ctx, "users", "2", temporal.OpDelete, nil, nil, t2); err != nil {
+		t.Fatalf("Append users/2 delete: %v", err)
+	}
+
+	got, err := s.ReplayAsOf(ctx, "users", time.Time{}, t2)
+	if err != nil {
+		t.Fatalf("ReplayAsOf: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ReplayAsOf returned %d events, want 1 (users/2 deleted, users/1 visible)", len(got))
+	}
+	if got[0].Key != "1" || string(got[0].Value) != `{"v":2}` {
+		t.Errorf("got %+v, want key=1 value={\"v\":2}", got[0])
+	}
+
+	got, err = s.ReplayAsOf(ctx, "users", time.Time{}, t1)
+	if err != nil {
+		t.Fatalf("ReplayAsOf(t1): %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ReplayAsOf(t1) returned %d events, want 2 (both keys existed then)", len(got))
 	}
 }

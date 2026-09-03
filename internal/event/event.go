@@ -77,16 +77,17 @@ func (s *Store) Append(ctx context.Context, collection, key string, op temporal.
 		deleted = 1
 	}
 	if _, err = tx.ExecContext(ctx, `
-		INSERT INTO live (collection, key, value, valid_from, tx_time, deleted, seq)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO live (collection, key, value, valid_from, tx_time, deleted, seq, meta)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(collection, key) DO UPDATE SET
 			value = excluded.value,
 			valid_from = excluded.valid_from,
 			tx_time = excluded.tx_time,
 			deleted = excluded.deleted,
-			seq = excluded.seq`,
+			seq = excluded.seq,
+			meta = excluded.meta`,
 		collection, key, nullBytes(value),
-		temporal.Encode(validFrom), temporal.Encode(txTime), deleted, seq,
+		temporal.Encode(validFrom), temporal.Encode(txTime), deleted, seq, string(meta),
 	); err != nil {
 		return temporal.Event{}, fmt.Errorf("event: upsert live: %w", err)
 	}
@@ -105,14 +106,14 @@ func (s *Store) Append(ctx context.Context, collection, key string, op temporal.
 // never been written or its most recent version is a delete.
 func (s *Store) Get(ctx context.Context, collection, key string) (*temporal.Event, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT value, valid_from, tx_time, deleted, seq FROM live
+		SELECT value, valid_from, tx_time, deleted, seq, meta FROM live
 		WHERE collection = ? AND key = ?`, collection, key)
 
-	var value []byte
+	var value, meta []byte
 	var validFromS, txTimeS string
 	var deleted int
 	var seq int64
-	if err := row.Scan(&value, &validFromS, &txTimeS, &deleted, &seq); err != nil {
+	if err := row.Scan(&value, &validFromS, &txTimeS, &deleted, &seq, &meta); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -132,7 +133,7 @@ func (s *Store) Get(ctx context.Context, collection, key string) (*temporal.Even
 	}
 	return &temporal.Event{
 		Seq: seq, Collection: collection, Key: key, Op: temporal.OpPut,
-		Value: value, ValidFrom: validFrom, TxTime: txTime,
+		Value: value, ValidFrom: validFrom, TxTime: txTime, Meta: meta,
 	}, nil
 }
 
@@ -184,6 +185,58 @@ func (s *Store) AsOf(ctx context.Context, collection, key string, asOf, validAt 
 		return nil, nil
 	}
 	return &e, nil
+}
+
+// ReplayAsOf returns, for every key ever written in collection, the
+// version visible at the given times (temporal.Visible), excluding keys
+// with no visible version and keys whose visible version is a delete. It
+// is the primitive behind AS-OF queries across a whole collection (FIND
+// ... AS OF, graph.Store.RelatedAsOf) where the live projection's
+// current-only view cannot answer.
+func (s *Store) ReplayAsOf(ctx context.Context, collection string, asOf, validAt time.Time) ([]temporal.Event, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT key, seq, op, value, valid_from, tx_time, meta FROM events
+		WHERE collection = ? ORDER BY key ASC, seq ASC`, collection)
+	if err != nil {
+		return nil, fmt.Errorf("event: replay %s: %w", collection, err)
+	}
+	defer rows.Close()
+
+	byKey := make(map[string][]temporal.Event)
+	var order []string
+	for rows.Next() {
+		var e temporal.Event
+		var key, opS, validFromS, txTimeS string
+		var value, meta []byte
+		if err := rows.Scan(&key, &e.Seq, &opS, &value, &validFromS, &txTimeS, &meta); err != nil {
+			return nil, fmt.Errorf("event: scan replay %s: %w", collection, err)
+		}
+		e.Collection, e.Key, e.Op = collection, key, temporal.Op(opS)
+		e.Value, e.Meta = value, meta
+		if e.ValidFrom, err = temporal.Parse(validFromS); err != nil {
+			return nil, err
+		}
+		if e.TxTime, err = temporal.Parse(txTimeS); err != nil {
+			return nil, err
+		}
+		if _, seen := byKey[key]; !seen {
+			order = append(order, key)
+		}
+		byKey[key] = append(byKey[key], e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("event: replay %s: %w", collection, err)
+	}
+
+	out := make([]temporal.Event, 0, len(order))
+	for _, key := range order {
+		e, ok := temporal.Visible(byKey[key], asOf, validAt)
+		if !ok || e.Op == temporal.OpDelete {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, nil
 }
 
 func nullBytes(b []byte) interface{} {
