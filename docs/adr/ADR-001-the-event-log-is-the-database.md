@@ -430,6 +430,20 @@ Reads go through WAL and are never blocked by the writer. This is "single writer
 per aggregate" (`cqrs` §1) with the aggregate being the whole database file, which is the correct
 granularity for a single-file embedded store serving through one server process.
 
+**Addition (implementation, 2026-09-03): the shared connection pool was capped at 1 for every
+path, undermining "reads... are never blocked by the writer" above.** `storage.open` called
+`db.SetMaxOpenConns(1)` unconditionally — `database/sql`'s pool cap applies to every caller
+regardless of read or write, so this forced every read *and* write through one connection,
+process-wide, exactly the serialization WAL exists to avoid. Found via independent review. The
+cap was originally 1 for a real reason on the `:memory:` path `OpenMemory` uses: a bare
+`:memory:` DSN with no shared-cache mode gives each connection its own private, empty database,
+so more than one connection would silently see a different, empty database rather than more
+concurrency. Fixed by differentiating on path rather than removing the cap everywhere:
+`:memory:` keeps `MaxOpenConns(1)` (a correctness requirement, not a performance choice);
+file-backed databases get a higher cap (`storage.maxFileConns`, 10) — `event.Store`'s own mutex
+already serializes writer transactions at the Go level, so more connections only ever add
+concurrent-reader capacity, which WAL mode supports natively and safely.
+
 ## Alternatives Considered
 
 - **`mattn/go-sqlite3` (cgo driver):** rejected outright — the ask is explicit about no-cgo, and

@@ -35,6 +35,16 @@ func OpenMemory() (*sql.DB, error) {
 	return open(":memory:")
 }
 
+// maxFileConns bounds the pool for a file-backed database. event.Store's
+// own mutex already serializes writer transactions at the Go level
+// (ADR-001 D13), so more connections here only ever add concurrent-reader
+// capacity — which WAL mode supports natively. Capping this at 1 (as every
+// path used to be) serialized reads behind each other and behind the
+// writer for no reason WAL doesn't already solve; found via independent
+// review. Not exposed as a config knob: an implementation detail, not a
+// capacity operators are expected to tune.
+const maxFileConns = 10
+
 func open(path string) (*sql.DB, error) {
 	dsn := fmt.Sprintf(
 		"file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)",
@@ -44,10 +54,16 @@ func open(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("storage: open %s: %w", path, err)
 	}
-	// Single writer (ADR-001 D13): WAL already gives readers concurrency
-	// without more connections, and more than one writer connection fights
-	// WAL rather than helping it.
-	db.SetMaxOpenConns(1)
+	if path == ":memory:" {
+		// A bare :memory: DSN (no shared-cache mode) gives each
+		// connection its own private, empty database — more than one
+		// connection would silently see different databases, not more
+		// concurrency. This cap is a correctness requirement, not a
+		// performance choice.
+		db.SetMaxOpenConns(1)
+	} else {
+		db.SetMaxOpenConns(maxFileConns)
+	}
 
 	if err := migrate(db); err != nil {
 		db.Close()
