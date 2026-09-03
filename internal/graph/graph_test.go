@@ -24,11 +24,20 @@ func must(t *testing.T, err error) {
 	}
 }
 
+func mustRelate(t *testing.T, s *Store, ctx context.Context, fromColl, fromKey, edgeType, toColl, toKey string, props json.RawMessage) Edge {
+	t.Helper()
+	e, err := s.Relate(ctx, fromColl, fromKey, edgeType, toColl, toKey, props)
+	if err != nil {
+		t.Fatalf("Relate: %v", err)
+	}
+	return e
+}
+
 func TestRelateAndRelated(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	must(t, s.Relate(ctx, "users", "1", "knows", "users", "2", nil))
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
 
 	edges, err := s.Related(ctx, "users", "1", "", 0)
 	if err != nil {
@@ -46,8 +55,8 @@ func TestRelatedFiltersByType(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	must(t, s.Relate(ctx, "users", "1", "knows", "users", "2", nil))
-	must(t, s.Relate(ctx, "users", "1", "blocks", "users", "3", nil))
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
+	mustRelate(t, s, ctx, "users", "1", "blocks", "users", "3", nil)
 
 	edges, err := s.Related(ctx, "users", "1", "knows", 0)
 	if err != nil {
@@ -70,7 +79,7 @@ func TestRelateWithProps(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	must(t, s.Relate(ctx, "users", "1", "knows", "users", "2", json.RawMessage(`{"since":2020}`)))
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", json.RawMessage(`{"since":2020}`))
 	edges, err := s.Related(ctx, "users", "1", "", 0)
 	if err != nil {
 		t.Fatalf("Related: %v", err)
@@ -84,7 +93,7 @@ func TestUnrelateRemovesFromRelated(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	must(t, s.Relate(ctx, "users", "1", "knows", "users", "2", nil))
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
 	must(t, s.Unrelate(ctx, "users", "1", "knows", "users", "2"))
 
 	edges, err := s.Related(ctx, "users", "1", "", 0)
@@ -100,7 +109,7 @@ func TestRelatedAsOf(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	must(t, s.Relate(ctx, "users", "1", "knows", "users", "2", nil))
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
 	tAfterRelate := time.Now().UTC()
 
 	must(t, s.Unrelate(ctx, "users", "1", "knows", "users", "2"))
@@ -126,9 +135,9 @@ func TestRelatedAsOf(t *testing.T) {
 func TestRelatedLimit(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	must(t, s.Relate(ctx, "users", "1", "knows", "users", "2", nil))
-	must(t, s.Relate(ctx, "users", "1", "knows", "users", "3", nil))
-	must(t, s.Relate(ctx, "users", "1", "knows", "users", "4", nil))
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "3", nil)
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "4", nil)
 
 	edges, err := s.Related(ctx, "users", "1", "", 2)
 	if err != nil {

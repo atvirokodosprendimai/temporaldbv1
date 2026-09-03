@@ -23,11 +23,13 @@ const EdgeCollection = "__edges__"
 // Edge is one relation between two documents, identified as
 // "<collection>/<key>" strings.
 type Edge struct {
-	From, Type, To string
-	Props          json.RawMessage
-	Seq            int64
-	ValidFrom      time.Time
-	TxTime         time.Time
+	From      string          `json:"from"`
+	Type      string          `json:"type"`
+	To        string          `json:"to"`
+	Props     json.RawMessage `json:"props,omitempty"`
+	Seq       int64           `json:"seq,omitempty"`
+	ValidFrom time.Time       `json:"valid_from,omitzero"`
+	TxTime    time.Time       `json:"tx_time,omitzero"`
 }
 
 type edgeMeta struct {
@@ -54,21 +56,23 @@ func NewStore(events *event.Store, db *sql.DB) *Store {
 	return &Store{events: events, db: db}
 }
 
-// Relate creates or updates one edge.
-func (s *Store) Relate(ctx context.Context, fromColl, fromKey, edgeType, toColl, toKey string, props json.RawMessage) error {
+// Relate creates or updates one edge and returns what was committed —
+// mirroring event.Store.Append, which is what actually assigns Seq and
+// the timestamps.
+func (s *Store) Relate(ctx context.Context, fromColl, fromKey, edgeType, toColl, toKey string, props json.RawMessage) (Edge, error) {
 	from, to := path(fromColl, fromKey), path(toColl, toKey)
 	meta, err := json.Marshal(edgeMeta{From: from, Type: edgeType, To: to})
 	if err != nil {
-		return fmt.Errorf("graph: encode edge meta: %w", err)
+		return Edge{}, fmt.Errorf("graph: encode edge meta: %w", err)
 	}
 	if len(props) == 0 {
 		props = json.RawMessage("{}")
 	}
-	_, err = s.events.Append(ctx, EdgeCollection, edgeKey(from, edgeType, to), temporal.OpPut, props, meta, time.Time{})
+	e, err := s.events.Append(ctx, EdgeCollection, edgeKey(from, edgeType, to), temporal.OpPut, props, meta, time.Time{})
 	if err != nil {
-		return fmt.Errorf("graph: relate %s -%s-> %s: %w", from, edgeType, to, err)
+		return Edge{}, fmt.Errorf("graph: relate %s -%s-> %s: %w", from, edgeType, to, err)
 	}
-	return nil
+	return Edge{From: from, Type: edgeType, To: to, Props: e.Value, Seq: e.Seq, ValidFrom: e.ValidFrom, TxTime: e.TxTime}, nil
 }
 
 // Unrelate removes one edge (a tombstone, like any other delete — the

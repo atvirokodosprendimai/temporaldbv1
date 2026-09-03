@@ -222,15 +222,11 @@ func (ex *Executor) execHistory(ctx context.Context, s *HistoryStmt) (Result, er
 }
 
 func (ex *Executor) execRelate(ctx context.Context, s *RelateStmt) (Result, error) {
-	if err := ex.Graph.Relate(ctx, s.FromCollection, s.FromKey, s.EdgeType, s.ToCollection, s.ToKey, s.Props); err != nil {
+	e, err := ex.Graph.Relate(ctx, s.FromCollection, s.FromKey, s.EdgeType, s.ToCollection, s.ToKey, s.Props)
+	if err != nil {
 		return Result{}, err
 	}
-	return Result{Edges: []graph.Edge{{
-		From: s.FromCollection + "/" + s.FromKey,
-		Type: s.EdgeType,
-		To:   s.ToCollection + "/" + s.ToKey,
-		Props: s.Props,
-	}}}, nil
+	return Result{Edges: []graph.Edge{e}}, nil
 }
 
 func (ex *Executor) execUnrelate(ctx context.Context, s *UnrelateStmt) (Result, error) {
