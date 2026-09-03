@@ -174,6 +174,30 @@ func (c *Client) History(ctx context.Context, collection, key string) ([]ResultV
 	return res.Rows, nil
 }
 
+// Search runs SEARCH against collection (ADR-001 D6 — requires the server
+// to have vector search configured; if it does not, this returns the
+// server's "not configured" error). whereClause is an optional TQL WHERE
+// clause without the WHERE keyword, e.g. `lang = "en"`; pass "" for none.
+// limit <= 0 means unspecified.
+func (c *Client) Search(ctx context.Context, collection, query, whereClause string, limit int) ([]ResultValue, error) {
+	qb, err := json.Marshal(query)
+	if err != nil {
+		return nil, fmt.Errorf("client: encode search query: %w", err)
+	}
+	q := fmt.Sprintf("SEARCH %s NEAR %s", collection, qb)
+	if whereClause != "" {
+		q += " WHERE " + whereClause
+	}
+	if limit > 0 {
+		q += fmt.Sprintf(" LIMIT %d", limit)
+	}
+	res, err := c.one(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	return res.Rows, nil
+}
+
 // quoteKeyIfNeeded quotes a key for TQL if it contains a character a bare
 // identifier cannot hold — notably '-', so a UUID key round-trips (see
 // internal/tql's lexer, which excludes '-' from identifiers so RELATE's

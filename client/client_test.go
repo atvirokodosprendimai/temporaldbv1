@@ -140,3 +140,46 @@ func TestClientQueryReportsParseError(t *testing.T) {
 		t.Error("Error = empty, want a parse error message")
 	}
 }
+
+func TestClientSearchNotConfigured(t *testing.T) {
+	c := newTestClient(t) // wires no Searcher
+	_, err := c.Search(context.Background(), "docs", "hello", "", 0)
+	if err == nil {
+		t.Error("Search with no vector backend configured: want error, got nil")
+	}
+}
+
+// fakeSearcher stands in for internal/vector's index (T10, not built
+// yet) so Search's TQL construction (quoting, WHERE, LIMIT) can be
+// verified end to end without a real Qdrant/TEI instance.
+type fakeSearcher struct{ keys []string }
+
+func (f fakeSearcher) Search(_ context.Context, _, _ string, limit int) ([]string, error) {
+	keys := f.keys
+	if limit > 0 && limit < len(keys) {
+		keys = keys[:limit]
+	}
+	return keys, nil
+}
+
+func TestClientSearchWithWhereAndLimit(t *testing.T) {
+	db := storagetest.DB(t)
+	t.Cleanup(func() { storagetest.Reset(t, db) })
+	es := event.NewStore(db)
+	ex := tql.NewExecutor(db, es, graph.NewStore(es, db), fakeSearcher{keys: []string{"1", "2"}})
+	ts := httptest.NewServer(server.New(ex))
+	t.Cleanup(ts.Close)
+	c := New(ts.URL)
+
+	ctx := context.Background()
+	mustPut(t, c, ctx, "docs", "1", json.RawMessage(`{"lang":"en"}`))
+	mustPut(t, c, ctx, "docs", "2", json.RawMessage(`{"lang":"lt"}`))
+
+	rows, err := c.Search(ctx, "docs", `a "quoted" query`, `lang = "en"`, 5)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Key != "1" {
+		t.Fatalf("Search = %+v, want just docs/1 (WHERE lang=en excludes docs/2)", rows)
+	}
+}
