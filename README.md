@@ -191,6 +191,74 @@ PURGE    <collection> BEFORE <time>
 Not in v1 — see `docs/adr/BACKLOG.md`: `OR`/subqueries/joins in `WHERE` (§4),
 and `SEARCH ... AS OF` (§6).
 
+## MCP server
+
+`cmd/temporaldb-mcp` exposes TemporalDB to MCP clients (Claude Code, Claude
+Desktop, or any MCP-speaking agent) over stdio, using the official
+[`modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk)
+(vendored). It's a thin wrapper over the same `client` package the CLI uses —
+it talks to a running `temporaldb-server`; it never opens the database file
+itself.
+
+### Running it
+
+```sh
+go build -o temporaldb-mcp ./cmd/temporaldb-mcp
+```
+
+It reads `TEMPORALDB_ADDR` for which server to connect to (default
+`http://localhost:7777`) and speaks MCP over stdin/stdout — an MCP client
+launches it as a subprocess; it isn't a service you start and leave running
+yourself.
+
+### Configuring an MCP client
+
+Point the client at the built binary. For Claude Code, add to `.mcp.json` (or
+run `claude mcp add`):
+
+```json
+{
+  "mcpServers": {
+    "temporaldb": {
+      "command": "/path/to/temporaldb-mcp",
+      "env": { "TEMPORALDB_ADDR": "http://localhost:7777" }
+    }
+  }
+}
+```
+
+### Tools
+
+Every call and result is JSON. `<value>` below is one document:
+`{"collection", "key", "value", "valid_from", "tx_time"}`; `<edge>` is one
+relation: `{"from", "type", "to", "props", "seq", "valid_from", "tx_time"}`.
+
+**`tql_query`** — run raw TQL (see the tutorial above). The general-purpose
+escape hatch for anything a typed tool below doesn't cover.
+- In: `{"tql": "<one or more newline-separated TQL statements>"}`
+- Out: `{"results": [{"rows": [<value>, ...], "edges": [<edge>, ...], "purged": N}, ...]}` — one entry per statement, in order
+
+**`tql_get`** — fetch the current value of one document.
+- In: `{"collection": "...", "key": "..."}`
+- Out: `{"found": true, "value": <value>}` or `{"found": false}`
+
+**`tql_put`** — create or replace one document. `value` must be a JSON object.
+- In: `{"collection": "...", "key": "...", "value": {...}}`
+- Out: `{"value": <value>}`
+
+**`tql_history`** — every version of one document, oldest first.
+- In: `{"collection": "...", "key": "..."}`
+- Out: `{"versions": [<value>, ...]}`
+
+**`tql_search`** — vector search. Requires the server to have `QDRANT_URL`
+and `TEI_URL` configured; otherwise the call errors, explaining that.
+- In: `{"collection": "...", "query": "...", "where": "<optional TQL WHERE clause, no WHERE keyword>", "limit": N}`
+- Out: `{"results": [<value>, ...]}`
+
+None of these duplicate TQL-compilation logic — each is one call through the
+same `client.Client` the CLI uses, so the MCP surface can never drift from
+what the server actually does.
+
 ## Configuration
 
 Environment variables (or a `.env` file):
