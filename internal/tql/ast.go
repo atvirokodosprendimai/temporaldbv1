@@ -8,6 +8,8 @@ package tql
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/atvirokodosprendimai/temporaldbv1/internal/graph"
 )
 
 // Stmt is any parsed TQL statement.
@@ -28,6 +30,7 @@ type FindStmt struct {
 	OrderBy    string // "" means unspecified
 	Desc       bool
 	Limit      int // 0 means unspecified
+	Offset     int // 0 means unspecified; meaningless without Limit or OrderBy
 }
 
 // PutStmt is "PUT <collection>/<key> <json-object> [AT <time>]".
@@ -67,9 +70,11 @@ type UnrelateStmt struct {
 // <time>] [LIMIT <n>]".
 type RelatedStmt struct {
 	Collection, Key string
-	EdgeType        string // "" means any type
+	EdgeTypes       []string // nil/empty means any type
+	Direction       graph.Direction
 	AsOf            *time.Time
 	Limit           int
+	Offset          int
 }
 
 // SearchStmt is "SEARCH <collection> NEAR "<text>" [WHERE <expr>] [LIMIT
@@ -79,6 +84,7 @@ type SearchStmt struct {
 	Query      string
 	Where      *Expr
 	Limit      int
+	Offset     int
 }
 
 // PurgeStmt is "PURGE <collection> BEFORE <time>" (ADR-001 D7).

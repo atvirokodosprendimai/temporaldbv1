@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/atvirokodosprendimai/temporaldbv1/internal/graph"
 )
 
 func TestParseGet(t *testing.T) {
@@ -278,8 +280,8 @@ func TestParseRelatedAnyType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if got := stmt.(*RelatedStmt).EdgeType; got != "" {
-		t.Errorf("EdgeType = %q, want empty (any type)", got)
+	if got := stmt.(*RelatedStmt).EdgeTypes; len(got) != 0 {
+		t.Errorf("EdgeTypes = %v, want empty (any type)", got)
 	}
 }
 
@@ -289,8 +291,8 @@ func TestParseRelatedTypedWithLimit(t *testing.T) {
 		t.Fatalf("Parse: %v", err)
 	}
 	r := stmt.(*RelatedStmt)
-	if r.EdgeType != "knows" || r.Limit != 5 {
-		t.Errorf("EdgeType/Limit = %q/%d, want knows/5", r.EdgeType, r.Limit)
+	if len(r.EdgeTypes) != 1 || r.EdgeTypes[0] != "knows" || r.Limit != 5 {
+		t.Errorf("EdgeTypes/Limit = %v/%d, want [knows]/5", r.EdgeTypes, r.Limit)
 	}
 }
 
@@ -406,5 +408,75 @@ func TestParseBatchReportsLineNumber(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "line 2") {
 		t.Errorf("error %q does not mention line 2", err.Error())
+	}
+}
+
+func TestParseRelatedMultiType(t *testing.T) {
+	stmt, err := Parse(`RELATED users/1 -[knows,parents]->`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	r := stmt.(*RelatedStmt)
+	if len(r.EdgeTypes) != 2 || r.EdgeTypes[0] != "knows" || r.EdgeTypes[1] != "parents" {
+		t.Errorf("EdgeTypes = %v, want [knows parents]", r.EdgeTypes)
+	}
+}
+
+func TestParseRelatedDirectionDefaultsToOut(t *testing.T) {
+	stmt, err := Parse(`RELATED users/1`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := stmt.(*RelatedStmt).Direction; got != graph.DirOut {
+		t.Errorf("Direction = %v, want DirOut (default)", got)
+	}
+}
+
+func TestParseRelatedDirectionIn(t *testing.T) {
+	stmt, err := Parse(`RELATED users/1 DIRECTION IN`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := stmt.(*RelatedStmt).Direction; got != graph.DirIn {
+		t.Errorf("Direction = %v, want DirIn", got)
+	}
+}
+
+func TestParseRelatedTypeDirectionLimitOffset(t *testing.T) {
+	stmt, err := Parse(`RELATED users/1 -knows-> DIRECTION BOTH LIMIT 5 OFFSET 2`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	r := stmt.(*RelatedStmt)
+	if len(r.EdgeTypes) != 1 || r.EdgeTypes[0] != "knows" || r.Direction != graph.DirBoth || r.Limit != 5 || r.Offset != 2 {
+		t.Errorf("RelatedStmt = %+v, want [knows]/DirBoth/5/2", r)
+	}
+}
+
+func TestParseRelatedInvalidDirection(t *testing.T) {
+	if _, err := Parse(`RELATED users/1 DIRECTION SIDEWAYS`); err == nil {
+		t.Fatal("Parse: want error for invalid DIRECTION value, got nil")
+	}
+}
+
+func TestParseFindOffset(t *testing.T) {
+	stmt, err := Parse(`FIND users LIMIT 10 OFFSET 20`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	f := stmt.(*FindStmt)
+	if f.Limit != 10 || f.Offset != 20 {
+		t.Errorf("Limit/Offset = %d/%d, want 10/20", f.Limit, f.Offset)
+	}
+}
+
+func TestParseSearchOffset(t *testing.T) {
+	stmt, err := Parse(`SEARCH docs NEAR "golang concurrency" LIMIT 5 OFFSET 10`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	s := stmt.(*SearchStmt)
+	if s.Limit != 5 || s.Offset != 10 {
+		t.Errorf("Limit/Offset = %d/%d, want 5/10", s.Limit, s.Offset)
 	}
 }

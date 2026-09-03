@@ -236,12 +236,25 @@ Primitives Audit), pushed into SQLite rather than deserializing every row into G
 process. `GET`/`PUT`/`DELETE`/`RELATE` compile to the same prepared statements the storage layer
 already uses for direct key access.
 
+**Addition (implementation, 2026-09-03): `OFFSET` on `FIND`/`RELATED`/`SEARCH`.** `LIMIT` alone
+cannot page — there was no way to ask for "the next N" without a growing, hand-rolled `WHERE`
+predicate. All three result-bounded verbs now accept an optional `OFFSET <n>` after `LIMIT`,
+applied after any `ORDER BY`: `FIND` compiles it to SQL (`LIMIT ? OFFSET ?`, using `LIMIT -1` when
+only `OFFSET` is given, since SQLite requires a `LIMIT` clause before `OFFSET` is syntactically
+valid), `FIND ... AS OF` applies it in Go after sorting (`internal/tql/match.go`'s
+`sortAndLimit`), and `SEARCH` requests `LIMIT + OFFSET` candidates from the vector index and trims
+the front, since a vector index has no native offset concept. `RELATED` reuses the same SQL and
+Go-side patterns — see the D5 addition below.
+
 ### D5 — Relations (the knowledge graph) live in the same event log
 
 Edges are a distinguished collection (`__edges__`), versioned through the identical `events`/
 `live` machinery as any other collection — so relations are temporal too: `RELATE`/`UNRELATE` are
-just `PUT`/`DELETE` against a synthetic key `from|type|to`, with `meta` carrying `{from, type, to,
-props}`. `RELATED` compiles to a `live` scan filtered by `json_extract(meta,'$.from')`. This
+just `PUT`/`DELETE` against a synthetic key — a length-prefixed SHA256 hash of `from`/`type`/`to`,
+collision-proof against arbitrary quoted-string components (corrected during implementation from a
+naive `from|type|to` join; found via independent review, 2026-09-03) — with `meta` carrying
+`{from, type, to, props}`. `RELATED` compiles to a `live` scan filtered by
+`json_extract(meta,'$.from')`. This
 directly satisfies "documents + how they related" without a second storage subsystem — the
 KG is not a separate database bolted on, it is what TQL's graph verbs compile to against the one
 store.
@@ -252,6 +265,19 @@ scoped to `__edges__`) — added in response to a real need surfaced while using
 what relation vocabulary a graph actually contains, without already knowing every type name to ask
 `RELATED ... -<type>->` about. Not a correction of anything above; the same `live` json_extract
 scan D4/D5 already describe, one more read-only verb over it.
+
+**Addition (implementation, 2026-09-03): `RELATED` direction and multi-type filtering.**
+`RELATED` originally only ever followed an edge's own arrow (`from -> to`) and filtered to at most
+one edge type. Two real needs surfaced using the graph: finding what points *at* a node without
+already knowing its callers — nested containment ("what contains this box") needs the reverse of
+`RELATE`'s arrow — and filtering to several related-but-distinct edge types in one call (`knows`
+OR `parents`, say) instead of one call per type. `RELATED` now takes an optional `DIRECTION
+OUT|IN|BOTH` clause (default `OUT`, matching the arrow) and an edge-type clause accepting either
+one type (`-knows->`) or a bracketed list (`-[knows,parents]->`, OR semantics, since one edge has
+exactly one type) — `graph.Direction` and `graph.Store.Related`/`RelatedAsOf` now take
+`edgeTypes []string, direction Direction`. `RelatedAsOf`'s `validAt`-only semantics (the D3
+correction above) are unchanged; direction and type filtering apply identically to both the
+current-state `live` scan and the AS-OF `ReplayAsOf` replay.
 
 ### D6 — Vector search: optional, additive, never the source of truth
 

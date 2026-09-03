@@ -324,3 +324,83 @@ func TestExecUnknownStatementType(t *testing.T) {
 		t.Error("Exec(nil Stmt): want error, got nil")
 	}
 }
+
+func TestExecRelatedDirectionIn(t *testing.T) {
+	ex := newExecutor(t, nil)
+	mustExec(t, ex, `RELATE users/1 -knows-> users/2`)
+
+	out := mustExec(t, ex, `RELATED users/2`)
+	if len(out.Edges) != 0 {
+		t.Fatalf("RELATED users/2 (default OUT) = %+v, want empty (edge points INTO users/2)", out.Edges)
+	}
+
+	in := mustExec(t, ex, `RELATED users/2 DIRECTION IN`)
+	if len(in.Edges) != 1 || in.Edges[0].From != "users/1" {
+		t.Fatalf("RELATED users/2 DIRECTION IN = %+v, want the users/1->users/2 edge", in.Edges)
+	}
+}
+
+func TestExecRelatedMultiTypeBracket(t *testing.T) {
+	ex := newExecutor(t, nil)
+	mustExec(t, ex, `RELATE users/1 -knows-> users/2`)
+	mustExec(t, ex, `RELATE users/1 -blocks-> users/3`)
+	mustExec(t, ex, `RELATE users/1 -parents-> users/4`)
+
+	res := mustExec(t, ex, `RELATED users/1 -[knows,parents]->`)
+	if len(res.Edges) != 2 {
+		t.Fatalf("RELATED -[knows,parents]-> = %+v, want 2 edges (blocks excluded)", res.Edges)
+	}
+	for _, e := range res.Edges {
+		if e.Type != "knows" && e.Type != "parents" {
+			t.Errorf("unexpected edge type %q", e.Type)
+		}
+	}
+}
+
+func TestExecRelatedOffset(t *testing.T) {
+	ex := newExecutor(t, nil)
+	mustExec(t, ex, `RELATE users/1 -knows-> users/2`)
+	mustExec(t, ex, `RELATE users/1 -knows-> users/3`)
+	mustExec(t, ex, `RELATE users/1 -knows-> users/4`)
+
+	res := mustExec(t, ex, `RELATED users/1 LIMIT 2 OFFSET 1`)
+	if len(res.Edges) != 2 || res.Edges[0].To != "users/3" || res.Edges[1].To != "users/4" {
+		t.Fatalf("RELATED LIMIT 2 OFFSET 1 = %+v, want [users/3 users/4]", res.Edges)
+	}
+}
+
+func TestExecFindOffset(t *testing.T) {
+	ex := newExecutor(t, nil)
+	mustExec(t, ex, `PUT users/1 {"v":1}`)
+	mustExec(t, ex, `PUT users/2 {"v":2}`)
+	mustExec(t, ex, `PUT users/3 {"v":3}`)
+
+	res := mustExec(t, ex, `FIND users ORDER BY v LIMIT 1 OFFSET 1`)
+	if len(res.Rows) != 1 || string(res.Rows[0].Value) != `{"v":2}` {
+		t.Fatalf("FIND ORDER BY v LIMIT 1 OFFSET 1 = %+v, want just v2", res.Rows)
+	}
+}
+
+func TestExecFindAsOfOffset(t *testing.T) {
+	ex := newExecutor(t, nil)
+	mustExec(t, ex, `PUT users/1 {"v":1} AT "2026-01-01"`)
+	mustExec(t, ex, `PUT users/2 {"v":2} AT "2026-01-01"`)
+	mustExec(t, ex, `PUT users/3 {"v":3} AT "2026-01-01"`)
+
+	res := mustExec(t, ex, `FIND users AS OF "2026-06-01" ORDER BY v LIMIT 1 OFFSET 1`)
+	if len(res.Rows) != 1 || string(res.Rows[0].Value) != `{"v":2}` {
+		t.Fatalf("FIND AS OF ORDER BY v LIMIT 1 OFFSET 1 = %+v, want just v2", res.Rows)
+	}
+}
+
+func TestExecSearchOffset(t *testing.T) {
+	ex := newExecutor(t, fakeSearcher{keys: []string{"3", "1", "2"}})
+	mustExec(t, ex, `PUT docs/1 {"v":1}`)
+	mustExec(t, ex, `PUT docs/2 {"v":2}`)
+	mustExec(t, ex, `PUT docs/3 {"v":3}`)
+
+	res := mustExec(t, ex, `SEARCH docs NEAR "anything" LIMIT 2 OFFSET 1`)
+	if len(res.Rows) != 2 || res.Rows[0].Key != "1" || res.Rows[1].Key != "2" {
+		t.Fatalf("SEARCH LIMIT 2 OFFSET 1 = %+v, want [docs/1 docs/2] (relevance order 3,1,2 with the first skipped)", res.Rows)
+	}
+}

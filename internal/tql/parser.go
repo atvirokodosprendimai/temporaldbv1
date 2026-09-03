@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/atvirokodosprendimai/temporaldbv1/internal/graph"
 )
 
 // Parse parses one TQL statement. Trailing input after a complete
@@ -183,6 +185,18 @@ func (p *parser) parseLimit() (int, error) {
 	return lim, nil
 }
 
+func (p *parser) parseOffset() (int, error) {
+	n, err := p.expect(TNumber, "an OFFSET value")
+	if err != nil {
+		return 0, err
+	}
+	off, err := strconv.Atoi(n.Text)
+	if err != nil || off < 0 {
+		return 0, fmt.Errorf("tql: invalid OFFSET %q at position %d", n.Text, n.Pos)
+	}
+	return off, nil
+}
+
 func (p *parser) parseGet() (Stmt, error) {
 	p.next() // GET
 	coll, key, err := p.parsePath()
@@ -241,6 +255,12 @@ func (p *parser) parseFind() (Stmt, error) {
 	if p.atKeyword("LIMIT") {
 		p.next()
 		if stmt.Limit, err = p.parseLimit(); err != nil {
+			return nil, err
+		}
+	}
+	if p.atKeyword("OFFSET") {
+		p.next()
+		if stmt.Offset, err = p.parseOffset(); err != nil {
 			return nil, err
 		}
 	}
@@ -444,6 +464,68 @@ func (p *parser) parseEdge() (string, error) {
 	return et.Text, nil
 }
 
+// parseRelatedEdgeClause parses RELATED's optional edge-type clause:
+// "-<type>->" (one type) or "-[<type>,<type>,...]->" (any of several —
+// OR semantics, since one edge has exactly one type). Call only when
+// p.peek().Kind == TMinus.
+func (p *parser) parseRelatedEdgeClause() ([]string, error) {
+	if _, err := p.expect(TMinus, "'-' (start of an edge, e.g. -knows-> or -[a,b]->)"); err != nil {
+		return nil, err
+	}
+	if p.peek().Kind == TLBracket {
+		p.next() // [
+		var types []string
+		for {
+			t, err := p.expect(TIdent, "an edge type")
+			if err != nil {
+				return nil, err
+			}
+			types = append(types, t.Text)
+			if p.peek().Kind == TComma {
+				p.next()
+				continue
+			}
+			break
+		}
+		if _, err := p.expect(TRBracket, "']'"); err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(TArrow, "'->'"); err != nil {
+			return nil, err
+		}
+		return types, nil
+	}
+	et, err := p.expect(TIdent, "an edge type")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TArrow, "'->'"); err != nil {
+		return nil, err
+	}
+	return []string{et.Text}, nil
+}
+
+// parseDirection parses RELATED's optional "DIRECTION OUT|IN|BOTH"
+// clause's value (the DIRECTION keyword itself is consumed by the
+// caller).
+func (p *parser) parseDirection() (graph.Direction, error) {
+	t := p.peek()
+	if t.Kind != TIdent {
+		return graph.DirOut, fmt.Errorf("tql: expected OUT, IN, or BOTH at position %d, got %s", t.Pos, t)
+	}
+	p.next()
+	switch strings.ToUpper(t.Text) {
+	case "OUT":
+		return graph.DirOut, nil
+	case "IN":
+		return graph.DirIn, nil
+	case "BOTH":
+		return graph.DirBoth, nil
+	default:
+		return graph.DirOut, fmt.Errorf("tql: DIRECTION must be OUT, IN, or BOTH, got %q at position %d", t.Text, t.Pos)
+	}
+}
+
 func (p *parser) parseRelate() (Stmt, error) {
 	p.next() // RELATE
 	fc, fk, err := p.parsePath()
@@ -496,7 +578,13 @@ func (p *parser) parseRelated() (Stmt, error) {
 	}
 	stmt := &RelatedStmt{Collection: coll, Key: key}
 	if p.peek().Kind == TMinus {
-		if stmt.EdgeType, err = p.parseEdge(); err != nil {
+		if stmt.EdgeTypes, err = p.parseRelatedEdgeClause(); err != nil {
+			return nil, err
+		}
+	}
+	if p.atKeyword("DIRECTION") {
+		p.next()
+		if stmt.Direction, err = p.parseDirection(); err != nil {
 			return nil, err
 		}
 	}
@@ -508,6 +596,12 @@ func (p *parser) parseRelated() (Stmt, error) {
 	if p.atKeyword("LIMIT") {
 		p.next()
 		if stmt.Limit, err = p.parseLimit(); err != nil {
+			return nil, err
+		}
+	}
+	if p.atKeyword("OFFSET") {
+		p.next()
+		if stmt.Offset, err = p.parseOffset(); err != nil {
 			return nil, err
 		}
 	}
@@ -540,6 +634,12 @@ func (p *parser) parseSearch() (Stmt, error) {
 	if p.atKeyword("LIMIT") {
 		p.next()
 		if stmt.Limit, err = p.parseLimit(); err != nil {
+			return nil, err
+		}
+	}
+	if p.atKeyword("OFFSET") {
+		p.next()
+		if stmt.Offset, err = p.parseOffset(); err != nil {
 			return nil, err
 		}
 	}

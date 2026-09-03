@@ -68,6 +68,7 @@ FIND users
 FIND users WHERE age > 21
 FIND users WHERE age > 21 AND city = "NYC"
 FIND users ORDER BY age DESC LIMIT 10
+FIND users ORDER BY age DESC LIMIT 10 OFFSET 20    # page 3, 10 per page
 ```
 
 `WHERE` supports `=`, `!=`, `<`, `<=`, `>`, `>=`, `IN`, and `CONTAINS`:
@@ -120,12 +121,27 @@ as everything else, so they have history too. The arrow syntax is
 RELATE users/1 -knows-> users/2
 RELATE users/1 -knows-> users/2 {"since":2020}      # edges can carry properties
 UNRELATE users/1 -knows-> users/2
-
-RELATED users/1                    # every edge from users/1, any type
-RELATED users/1 -knows->           # only "knows" edges
-RELATED users/1 -knows-> LIMIT 5
-RELATED users/1 AS OF "2026-01-01" # the graph as it stood on that date
 ```
+
+`RELATED` walks the edges touching a node — by default the ones pointing
+*out* of it, matching the arrow. `DIRECTION` follows edges the other way
+(`IN`) or either way (`BOTH`); a bracketed list filters to several edge
+types at once (OR semantics, since one edge has exactly one type);
+`LIMIT`/`OFFSET` page through the rest, same as `FIND`:
+
+```
+RELATED users/1                            # every out-edge from users/1, any type
+RELATED users/1 -knows->                   # only "knows" edges out of users/1
+RELATED users/1 -[knows,blocks]->          # "knows" OR "blocks" out of users/1
+RELATED users/1 DIRECTION IN               # every edge pointing INTO users/1
+RELATED users/1 DIRECTION BOTH             # in- and out-edges, either direction
+RELATED users/1 -knows-> LIMIT 5 OFFSET 10 # page 3, 5 per page
+RELATED users/1 AS OF "2026-01-01"         # the graph as it stood on that date
+```
+
+`DIRECTION IN`/`BOTH` is what makes nested containment queryable both ways —
+given `boxes/2 -contains-> boxes/3`, `RELATED boxes/3 DIRECTION IN` finds
+what contains a box without already knowing its container's key.
 
 `EDGETYPES` lists every distinct edge type currently in use, sorted — useful
 for discovering what relation vocabulary a graph actually contains:
@@ -144,6 +160,7 @@ silently. It composes with `WHERE`, just like `FIND`:
 ```
 SEARCH docs NEAR "golang concurrency patterns"
 SEARCH docs NEAR "golang concurrency patterns" WHERE lang = "en" LIMIT 5
+SEARCH docs NEAR "golang concurrency patterns" WHERE lang = "en" LIMIT 5 OFFSET 10
 ```
 
 Documents are made searchable with `internal/vector.Index.Upsert(ctx,
@@ -179,21 +196,22 @@ FIND users
 
 ```
 GET      <collection>/<key> [AS OF <time>]
-FIND     <collection> [WHERE <expr>] [AS OF <time>] [ORDER BY <field> [ASC|DESC]] [LIMIT <n>]
+FIND     <collection> [WHERE <expr>] [AS OF <time>] [ORDER BY <field> [ASC|DESC]] [LIMIT <n>] [OFFSET <n>]
 PUT      <collection>/<key> <json-object> [AT <time>]
 DELETE   <collection>/<key>
 HISTORY  <collection>/<key> [BETWEEN <time> AND <time>]
 RELATE   <collection>/<key> -<edge-type>-> <collection>/<key> [<json-object>]
 UNRELATE <collection>/<key> -<edge-type>-> <collection>/<key>
-RELATED  <collection>/<key> [-<edge-type>->] [AS OF <time>] [LIMIT <n>]
+RELATED  <collection>/<key> [<edge-clause>] [DIRECTION OUT|IN|BOTH] [AS OF <time>] [LIMIT <n>] [OFFSET <n>]
 EDGETYPES
-SEARCH   <collection> NEAR "<text>" [WHERE <expr>] [LIMIT <n>]
+SEARCH   <collection> NEAR "<text>" [WHERE <expr>] [LIMIT <n>] [OFFSET <n>]
 PURGE    <collection> BEFORE <time>
 
-<expr>  := <field> <op> <value> [AND <expr>]
-<op>    := = | != | < | <= | > | >= | IN | CONTAINS
-<value> := string | number | true | false | null | [<value>, ...]
-<time>  := "<RFC3339 instant>" | "<YYYY-MM-DD>"
+<expr>        := <field> <op> <value> [AND <expr>]
+<op>          := = | != | < | <= | > | >= | IN | CONTAINS
+<value>       := string | number | true | false | null | [<value>, ...]
+<time>        := "<RFC3339 instant>" | "<YYYY-MM-DD>"
+<edge-clause> := -<edge-type>-> | -[<edge-type>, <edge-type>, ...]->
 ```
 
 Not in v1 — see `docs/adr/BACKLOG.md`: `OR`/subqueries/joins in `WHERE` (§4),

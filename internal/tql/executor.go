@@ -142,9 +142,17 @@ func (ex *Executor) execFind(ctx context.Context, s *FindStmt) (Result, error) {
 			query += " DESC"
 		}
 	}
-	if s.Limit > 0 {
-		query += " LIMIT ?"
-		qargs = append(qargs, s.Limit)
+	if s.Limit > 0 || s.Offset > 0 {
+		if s.Limit > 0 {
+			query += " LIMIT ?"
+			qargs = append(qargs, s.Limit)
+		} else {
+			query += " LIMIT -1" // SQLite: unlimited, but OFFSET requires a LIMIT clause
+		}
+		if s.Offset > 0 {
+			query += " OFFSET ?"
+			qargs = append(qargs, s.Offset)
+		}
 	}
 
 	rows, err := ex.db.QueryContext(ctx, query, qargs...)
@@ -189,7 +197,7 @@ func (ex *Executor) execFindAsOf(ctx context.Context, s *FindStmt) (Result, erro
 		}
 		rows = append(rows, toResultValue(e))
 	}
-	rows = sortAndLimit(rows, s.OrderBy, s.Desc, s.Limit)
+	rows = sortAndLimit(rows, s.OrderBy, s.Desc, s.Limit, s.Offset)
 	return Result{Rows: rows}, nil
 }
 
@@ -249,9 +257,9 @@ func (ex *Executor) execRelated(ctx context.Context, s *RelatedStmt) (Result, er
 	var edges []graph.Edge
 	var err error
 	if s.AsOf != nil {
-		edges, err = ex.Graph.RelatedAsOf(ctx, s.Collection, s.Key, s.EdgeType, *s.AsOf, s.Limit)
+		edges, err = ex.Graph.RelatedAsOf(ctx, s.Collection, s.Key, s.EdgeTypes, s.Direction, *s.AsOf, s.Limit, s.Offset)
 	} else {
-		edges, err = ex.Graph.Related(ctx, s.Collection, s.Key, s.EdgeType, s.Limit)
+		edges, err = ex.Graph.Related(ctx, s.Collection, s.Key, s.EdgeTypes, s.Direction, s.Limit, s.Offset)
 	}
 	if err != nil {
 		return Result{}, err
@@ -263,9 +271,20 @@ func (ex *Executor) execSearch(ctx context.Context, s *SearchStmt) (Result, erro
 	if ex.Search == nil {
 		return Result{}, fmt.Errorf("tql: SEARCH requires vector search to be configured (set QDRANT_URL and TEI_URL)")
 	}
-	keys, err := ex.Search.Search(ctx, s.Collection, s.Query, s.Limit)
+	fetch := s.Limit
+	if s.Offset > 0 && fetch > 0 {
+		fetch += s.Offset
+	}
+	keys, err := ex.Search.Search(ctx, s.Collection, s.Query, fetch)
 	if err != nil {
 		return Result{}, fmt.Errorf("tql: search: %w", err)
+	}
+	if s.Offset > 0 {
+		if s.Offset >= len(keys) {
+			keys = nil
+		} else {
+			keys = keys[s.Offset:]
+		}
 	}
 	if len(keys) == 0 {
 		return Result{}, nil

@@ -137,7 +137,7 @@ func toFloat(v any) (float64, bool) {
 // sortAndLimit applies ORDER BY/LIMIT in Go for result sets that did not
 // come from a SQL query (the AS-OF path). orderBy == "" leaves order
 // unchanged (insertion order, i.e. key order from ReplayAsOf).
-func sortAndLimit(rows []ResultValue, orderBy string, desc bool, limit int) []ResultValue {
+func sortAndLimit(rows []ResultValue, orderBy string, desc bool, limit, offset int) []ResultValue {
 	if orderBy != "" {
 		sort.SliceStable(rows, func(i, j int) bool {
 			if desc {
@@ -145,6 +145,12 @@ func sortAndLimit(rows []ResultValue, orderBy string, desc bool, limit int) []Re
 			}
 			return lessField(rows[i].Value, rows[j].Value, orderBy)
 		})
+	}
+	if offset > 0 {
+		if offset >= len(rows) {
+			return nil
+		}
+		rows = rows[offset:]
 	}
 	if limit > 0 && len(rows) > limit {
 		rows = rows[:limit]

@@ -39,7 +39,7 @@ func TestRelateAndRelated(t *testing.T) {
 
 	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
 
-	edges, err := s.Related(ctx, "users", "1", "", 0)
+	edges, err := s.Related(ctx, "users", "1", nil, DirOut, 0, 0)
 	if err != nil {
 		t.Fatalf("Related: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestRelatedFiltersByType(t *testing.T) {
 	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
 	mustRelate(t, s, ctx, "users", "1", "blocks", "users", "3", nil)
 
-	edges, err := s.Related(ctx, "users", "1", "knows", 0)
+	edges, err := s.Related(ctx, "users", "1", []string{"knows"}, DirOut, 0, 0)
 	if err != nil {
 		t.Fatalf("Related: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestRelatedFiltersByType(t *testing.T) {
 		t.Fatalf("Related(knows) = %+v, want 1 knows edge", edges)
 	}
 
-	edges, err = s.Related(ctx, "users", "1", "", 0)
+	edges, err = s.Related(ctx, "users", "1", nil, DirOut, 0, 0)
 	if err != nil {
 		t.Fatalf("Related: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestRelateWithProps(t *testing.T) {
 	ctx := context.Background()
 
 	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", json.RawMessage(`{"since":2020}`))
-	edges, err := s.Related(ctx, "users", "1", "", 0)
+	edges, err := s.Related(ctx, "users", "1", nil, DirOut, 0, 0)
 	if err != nil {
 		t.Fatalf("Related: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestUnrelateRemovesFromRelated(t *testing.T) {
 	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
 	must(t, s.Unrelate(ctx, "users", "1", "knows", "users", "2"))
 
-	edges, err := s.Related(ctx, "users", "1", "", 0)
+	edges, err := s.Related(ctx, "users", "1", nil, DirOut, 0, 0)
 	if err != nil {
 		t.Fatalf("Related: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestRelatedAsOf(t *testing.T) {
 	must(t, s.Unrelate(ctx, "users", "1", "knows", "users", "2"))
 	tAfterUnrelate := time.Now().UTC()
 
-	edges, err := s.RelatedAsOf(ctx, "users", "1", "", tAfterRelate, 0)
+	edges, err := s.RelatedAsOf(ctx, "users", "1", nil, DirOut, tAfterRelate, 0, 0)
 	if err != nil {
 		t.Fatalf("RelatedAsOf(after relate): %v", err)
 	}
@@ -123,7 +123,7 @@ func TestRelatedAsOf(t *testing.T) {
 		t.Fatalf("RelatedAsOf(after relate) = %d edges, want 1", len(edges))
 	}
 
-	edges, err = s.RelatedAsOf(ctx, "users", "1", "", tAfterUnrelate, 0)
+	edges, err = s.RelatedAsOf(ctx, "users", "1", nil, DirOut, tAfterUnrelate, 0, 0)
 	if err != nil {
 		t.Fatalf("RelatedAsOf(after unrelate): %v", err)
 	}
@@ -170,11 +170,125 @@ func TestRelatedLimit(t *testing.T) {
 	mustRelate(t, s, ctx, "users", "1", "knows", "users", "3", nil)
 	mustRelate(t, s, ctx, "users", "1", "knows", "users", "4", nil)
 
-	edges, err := s.Related(ctx, "users", "1", "", 2)
+	edges, err := s.Related(ctx, "users", "1", nil, DirOut, 2, 0)
 	if err != nil {
 		t.Fatalf("Related: %v", err)
 	}
 	if len(edges) != 2 {
 		t.Fatalf("got %d edges, want 2 (LIMIT)", len(edges))
+	}
+}
+
+func TestRelatedDirectionIn(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
+
+	out, err := s.Related(ctx, "users", "2", nil, DirOut, 0, 0)
+	if err != nil {
+		t.Fatalf("Related(out): %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("Related(users/2, DirOut) = %+v, want empty (edge points INTO users/2)", out)
+	}
+
+	in, err := s.Related(ctx, "users", "2", nil, DirIn, 0, 0)
+	if err != nil {
+		t.Fatalf("Related(in): %v", err)
+	}
+	if len(in) != 1 || in[0].From != "users/1" {
+		t.Fatalf("Related(users/2, DirIn) = %+v, want the users/1->users/2 edge", in)
+	}
+}
+
+func TestRelatedDirectionBoth(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil) // 1 -> 2
+	mustRelate(t, s, ctx, "users", "3", "knows", "users", "1", nil) // 3 -> 1
+
+	both, err := s.Related(ctx, "users", "1", nil, DirBoth, 0, 0)
+	if err != nil {
+		t.Fatalf("Related(both): %v", err)
+	}
+	if len(both) != 2 {
+		t.Fatalf("Related(users/1, DirBoth) = %d edges, want 2 (one out, one in)", len(both))
+	}
+}
+
+func TestRelatedMultiType(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
+	mustRelate(t, s, ctx, "users", "1", "blocks", "users", "3", nil)
+	mustRelate(t, s, ctx, "users", "1", "parents", "users", "4", nil)
+
+	edges, err := s.Related(ctx, "users", "1", []string{"knows", "parents"}, DirOut, 0, 0)
+	if err != nil {
+		t.Fatalf("Related: %v", err)
+	}
+	if len(edges) != 2 {
+		t.Fatalf("Related(knows,parents) = %d edges, want 2", len(edges))
+	}
+	for _, e := range edges {
+		if e.Type != "knows" && e.Type != "parents" {
+			t.Errorf("unexpected edge type %q, blocks should have been excluded", e.Type)
+		}
+	}
+}
+
+func TestRelatedOffset(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "3", nil)
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "4", nil)
+
+	edges, err := s.Related(ctx, "users", "1", nil, DirOut, 0, 1)
+	if err != nil {
+		t.Fatalf("Related: %v", err)
+	}
+	if len(edges) != 2 || edges[0].To != "users/3" || edges[1].To != "users/4" {
+		t.Fatalf("Related(offset=1) = %+v, want [users/3 users/4] (seq order, first skipped)", edges)
+	}
+}
+
+func TestRelatedLimitAndOffset(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "3", nil)
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "4", nil)
+
+	edges, err := s.Related(ctx, "users", "1", nil, DirOut, 1, 1)
+	if err != nil {
+		t.Fatalf("Related: %v", err)
+	}
+	if len(edges) != 1 || edges[0].To != "users/3" {
+		t.Fatalf("Related(limit=1,offset=1) = %+v, want [users/3]", edges)
+	}
+}
+
+func TestRelatedAsOfDirectionTypeOffset(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
+	mustRelate(t, s, ctx, "users", "3", "blocks", "users", "1", nil)
+	tAfter := time.Now().UTC()
+
+	in, err := s.RelatedAsOf(ctx, "users", "1", nil, DirIn, tAfter, 0, 0)
+	if err != nil {
+		t.Fatalf("RelatedAsOf(in): %v", err)
+	}
+	if len(in) != 1 || in[0].From != "users/3" {
+		t.Fatalf("RelatedAsOf(users/1, DirIn) = %+v, want the users/3->users/1 edge", in)
+	}
+
+	typed, err := s.RelatedAsOf(ctx, "users", "1", []string{"knows"}, DirBoth, tAfter, 0, 0)
+	if err != nil {
+		t.Fatalf("RelatedAsOf(typed): %v", err)
+	}
+	if len(typed) != 1 || typed[0].Type != "knows" {
+		t.Fatalf("RelatedAsOf(knows, DirBoth) = %+v, want just the knows edge", typed)
 	}
 }
