@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	once   sync.Once
-	db     *sql.DB
+	once    sync.Once
+	db      *sql.DB
 	openErr error
 )
 

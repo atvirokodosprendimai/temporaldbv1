@@ -10,23 +10,23 @@ import (
 type TokenKind int
 
 const (
-	TEOF TokenKind = iota
-	TIdent          // bare word: a keyword, collection/field/edge-type name, or bare key
-	TNumber         // 123, -4.5
-	TString         // "quoted text" — Text holds the UNESCAPED value
-	TJSON           // a whole {...} object — Text holds the raw JSON text
-	TSlash          // /
-	TEq             // =
-	TNeq            // !=
-	TLt             // <
-	TLte            // <=
-	TGt             // >
-	TGte            // >=
-	TMinus          // -
-	TArrow          // ->
-	TLBracket       // [
-	TRBracket       // ]
-	TComma          // ,
+	TEOF      TokenKind = iota
+	TIdent              // bare word: a keyword, collection/field/edge-type name, or bare key
+	TNumber             // 123, -4.5
+	TString             // "quoted text" — Text holds the UNESCAPED value
+	TJSON               // a whole {...} object — Text holds the raw JSON text
+	TSlash              // /
+	TEq                 // =
+	TNeq                // !=
+	TLt                 // <
+	TLte                // <=
+	TGt                 // >
+	TGte                // >=
+	TMinus              // -
+	TArrow              // ->
+	TLBracket           // [
+	TRBracket           // ]
+	TComma              // ,
 )
 
 // Token is one lexeme. Pos is a byte offset into the source, for error

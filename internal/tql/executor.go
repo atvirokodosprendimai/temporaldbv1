@@ -335,4 +335,3 @@ func (ex *Executor) execPurge(ctx context.Context, s *PurgeStmt) (Result, error)
 	}
 	return Result{Purged: n}, nil
 }
-
