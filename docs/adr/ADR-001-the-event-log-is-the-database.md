@@ -347,6 +347,25 @@ Two complementary mechanisms, both driven off facts already true of the design (
   segments before the same cutoff. This trades time-travel depth for storage; it is the ask's
   "purge option" on the streaming backup.
 
+**Addition (implementation, 2026-09-03): the shipper-pruning half of `PURGE` was not actually
+wired until this was caught by independent review.** The executor's `execPurge` deleted from
+`events` but never called `Sink.Purge`, so "instructs the shipper to prune shipped segments"
+above described the design, not the code — a running server's backup would silently retain
+everything `PURGE` claimed to have removed. Fixed: `tql.Executor` takes an optional `Backup
+Purger` (an interface declared in `internal/tql`, the same pattern as `Searcher` — so `PURGE`
+keeps working when no sink is configured), and `execPurge` now calls it after the `events`
+delete succeeds. `cmd/temporaldb-server/main.go` wires its `*backup.FileSink` in. Verified live:
+`PURGE` against a running server with a real (fast-interval) shipper now empties
+`events.ndjson`, not just the `events` table.
+
+**Addition (implementation, 2026-09-03): `TEMPORALDB_RETENTION` now actually purges.** The
+config field existed and was documented (README) since T7, but nothing read it — a server could
+set `TEMPORALDB_RETENTION` and see no effect, silently. `cmd/temporaldb-server/main.go` now runs
+a periodic sweep (reusing `TEMPORALDB_SNAPSHOT_INTERVAL` as its cadence, rather than adding a
+third interval knob) that issues one `PURGE <collection> BEFORE now-Retention` per distinct
+collection in `events` when `Retention > 0`; skipped entirely when it is 0 (disabled, the
+existing default).
+
 ### D8 — Server: HTTP, one transport, TQL text is the wire protocol
 
 `net/http` + `chi`. `POST /query` — request body is raw TQL (newline-separated for a batch);

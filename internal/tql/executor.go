@@ -22,6 +22,14 @@ type Searcher interface {
 	Search(ctx context.Context, collection, queryText string, limit int) (keys []string, err error)
 }
 
+// Purger is implemented by internal/backup's Sink. Declared here, not
+// imported, for the same reason as Searcher: PURGE must keep pruning the
+// events table even when no backup sink is configured, not fail to build
+// without one.
+type Purger interface {
+	Purge(ctx context.Context, cutoff time.Time) error
+}
+
 // ResultValue is one document in a Result.
 type ResultValue struct {
 	Collection string          `json:"collection"`
@@ -52,11 +60,12 @@ type Executor struct {
 	Events *event.Store
 	Graph  *graph.Store
 	Search Searcher // nil disables SEARCH (ADR-001 D6)
+	Backup Purger   // nil skips backup-sink pruning; the events table is still purged
 }
 
-// NewExecutor builds an Executor. search may be nil.
-func NewExecutor(db *sql.DB, events *event.Store, g *graph.Store, search Searcher) *Executor {
-	return &Executor{db: db, Events: events, Graph: g, Search: search}
+// NewExecutor builds an Executor. search and backup may be nil.
+func NewExecutor(db *sql.DB, events *event.Store, g *graph.Store, search Searcher, backup Purger) *Executor {
+	return &Executor{db: db, Events: events, Graph: g, Search: search, Backup: backup}
 }
 
 // Exec runs one parsed statement.
@@ -362,6 +371,11 @@ func (ex *Executor) execPurge(ctx context.Context, s *PurgeStmt) (Result, error)
 	n, err := res.RowsAffected()
 	if err != nil {
 		return Result{}, fmt.Errorf("tql: purge: %w", err)
+	}
+	if ex.Backup != nil {
+		if err := ex.Backup.Purge(ctx, s.Before); err != nil {
+			return Result{}, fmt.Errorf("tql: purge: backup: %w", err)
+		}
 	}
 	return Result{Purged: n}, nil
 }

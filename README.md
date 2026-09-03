@@ -171,12 +171,16 @@ needs to call it for whatever should be findable by `SEARCH`.
 ### Retention: PURGE
 
 `PURGE` deletes history older than a cutoff — the "purge option" on
-TemporalDB's streaming backup. It only removes old *versions*; the current
-value (and anything already backed up) is untouched:
+TemporalDB's streaming backup. It removes old *versions* from both the
+primary event log and the configured backup sink; the current value is
+untouched:
 
 ```
 PURGE users BEFORE "2025-01-01"
 ```
+
+Set `TEMPORALDB_RETENTION` to purge automatically on a schedule instead of
+calling `PURGE` by hand — see Configuration below.
 
 ### Batches
 
@@ -301,7 +305,7 @@ Environment variables (or a `.env` file):
 | `TEMPORALDB_BACKUP_DIR` | `./data/backup` | streaming backup / snapshot destination |
 | `TEMPORALDB_BACKUP_INTERVAL` | `30s` | streaming-ship cadence |
 | `TEMPORALDB_SNAPSHOT_INTERVAL` | `1h` | full-snapshot cadence |
-| `TEMPORALDB_RETENTION` | `0` (disabled) | age-based purge |
+| `TEMPORALDB_RETENTION` | `0` (disabled) | age-based purge, swept every `TEMPORALDB_SNAPSHOT_INTERVAL` |
 | `QDRANT_URL`, `QDRANT_API_KEY` | unset | enables vector search when set with `TEI_URL` |
 | `TEI_URL`, `TEI_RERANK_URL` | unset | Text Embeddings Inference endpoints |
 

@@ -2,6 +2,7 @@ package tql
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ func newExecutor(t *testing.T, search Searcher) *Executor {
 	db := storagetest.DB(t)
 	t.Cleanup(func() { storagetest.Reset(t, db) })
 	es := event.NewStore(db)
-	return NewExecutor(db, es, graph.NewStore(es, db), search)
+	return NewExecutor(db, es, graph.NewStore(es, db), search, nil)
 }
 
 func mustExec(t *testing.T, ex *Executor, tql string) Result {
@@ -402,5 +403,54 @@ func TestExecSearchOffset(t *testing.T) {
 	res := mustExec(t, ex, `SEARCH docs NEAR "anything" LIMIT 2 OFFSET 1`)
 	if len(res.Rows) != 2 || res.Rows[0].Key != "1" || res.Rows[1].Key != "2" {
 		t.Fatalf("SEARCH LIMIT 2 OFFSET 1 = %+v, want [docs/1 docs/2] (relevance order 3,1,2 with the first skipped)", res.Rows)
+	}
+}
+
+// fakePurger records every cutoff it's asked to purge, standing in for
+// backup.FileSink without depending on internal/backup from a tql test.
+type fakePurger struct {
+	calls []time.Time
+}
+
+func (f *fakePurger) Purge(_ context.Context, cutoff time.Time) error {
+	f.calls = append(f.calls, cutoff)
+	return nil
+}
+
+func TestExecPurgeCallsBackupSink(t *testing.T) {
+	db := storagetest.DB(t)
+	t.Cleanup(func() { storagetest.Reset(t, db) })
+	es := event.NewStore(db)
+	fp := &fakePurger{}
+	ex := NewExecutor(db, es, graph.NewStore(es, db), nil, fp)
+
+	mustExec(t, ex, `PUT users/1 {"v":1}`)
+	cutoff := time.Now().UTC().Add(time.Second)
+
+	if _, err := ex.Exec(context.Background(), &PurgeStmt{Collection: "users", Before: cutoff}); err != nil {
+		t.Fatalf("PURGE: %v", err)
+	}
+	if len(fp.calls) != 1 || !fp.calls[0].Equal(cutoff) {
+		t.Fatalf("backup Purge calls = %v, want one call with cutoff %v", fp.calls, cutoff)
+	}
+}
+
+type failingPurger struct{}
+
+func (failingPurger) Purge(context.Context, time.Time) error {
+	return errors.New("backup unavailable")
+}
+
+func TestExecPurgeReturnsBackupSinkError(t *testing.T) {
+	db := storagetest.DB(t)
+	t.Cleanup(func() { storagetest.Reset(t, db) })
+	es := event.NewStore(db)
+	ex := NewExecutor(db, es, graph.NewStore(es, db), nil, failingPurger{})
+
+	mustExec(t, ex, `PUT users/1 {"v":1}`)
+	cutoff := time.Now().UTC().Add(time.Second)
+
+	if _, err := ex.Exec(context.Background(), &PurgeStmt{Collection: "users", Before: cutoff}); err == nil {
+		t.Fatal("PURGE with a failing backup sink: want error, got nil")
 	}
 }

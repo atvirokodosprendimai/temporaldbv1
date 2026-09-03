@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -57,12 +58,12 @@ func run() error {
 		)
 		log.Printf("temporaldb-server: vector search enabled (qdrant %s, tei %s)", cfg.QdrantURL, cfg.TEIURL)
 	}
-	executor := tql.NewExecutor(db, events, g, search)
+	sink := backup.NewFileSink(cfg.BackupDir)
+	executor := tql.NewExecutor(db, events, g, search, sink)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	sink := backup.NewFileSink(cfg.BackupDir)
 	lastShipped, err := backup.LastShippedSeq(cfg.BackupDir)
 	if err != nil {
 		return fmt.Errorf("temporaldb-server: resume shipper: %w", err)
@@ -82,6 +83,14 @@ func run() error {
 		defer bgWG.Done()
 		runSnapshots(ctx, snapshotter, cfg.SnapshotInterval)
 	}()
+	if cfg.Retention > 0 {
+		bgWG.Add(1)
+		go func() {
+			defer bgWG.Done()
+			runRetention(ctx, db, executor, cfg.SnapshotInterval, cfg.Retention)
+		}()
+		log.Printf("temporaldb-server: retention purge enabled (older than %s, checked every %s)", cfg.Retention, cfg.SnapshotInterval)
+	}
 
 	srv := &http.Server{Addr: cfg.Addr, Handler: server.New(executor)}
 
@@ -131,6 +140,61 @@ func runSnapshots(ctx context.Context, snap *backup.Snapshotter, interval time.D
 			return
 		case <-ticker.C:
 			take()
+		}
+	}
+}
+
+// runRetention purges history older than retention from every collection,
+// once per interval — TEMPORALDB_RETENTION's "age-based purge" (README's
+// Configuration section). The caller only starts this goroutine when
+// retention > 0; unlike runSnapshots there is no immediate first sweep,
+// since waiting one interval before the first purge is the safe direction
+// (more history retained, not less).
+func runRetention(ctx context.Context, db *sql.DB, ex *tql.Executor, interval, retention time.Duration) {
+	sweep := func() {
+		rows, err := db.QueryContext(ctx, `SELECT DISTINCT collection FROM events`)
+		if err != nil {
+			log.Printf("temporaldb-server: retention: list collections: %v", err)
+			return
+		}
+		var colls []string
+		for rows.Next() {
+			var c string
+			if err := rows.Scan(&c); err != nil {
+				rows.Close()
+				log.Printf("temporaldb-server: retention: scan collection: %v", err)
+				return
+			}
+			colls = append(colls, c)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			log.Printf("temporaldb-server: retention: list collections: %v", err)
+			return
+		}
+
+		cutoff := time.Now().Add(-retention)
+		for _, c := range colls {
+			res, err := ex.Exec(ctx, &tql.PurgeStmt{Collection: c, Before: cutoff})
+			if err != nil {
+				log.Printf("temporaldb-server: retention: purge %s: %v", c, err)
+				continue
+			}
+			if res.Purged > 0 {
+				log.Printf("temporaldb-server: retention: purged %d event(s) from %s before %s",
+					res.Purged, c, cutoff.Format(time.RFC3339))
+			}
+		}
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweep()
 		}
 	}
 }

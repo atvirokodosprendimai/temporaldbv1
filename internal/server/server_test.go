@@ -18,7 +18,7 @@ func newTestServer(t *testing.T) *Server {
 	db := storagetest.DB(t)
 	t.Cleanup(func() { storagetest.Reset(t, db) })
 	es := event.NewStore(db)
-	ex := tql.NewExecutor(db, es, graph.NewStore(es, db), nil)
+	ex := tql.NewExecutor(db, es, graph.NewStore(es, db), nil, nil)
 	return New(ex)
 }
 
