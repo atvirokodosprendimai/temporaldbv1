@@ -27,6 +27,12 @@ go.work.sum
 # env file
 .env
 
+# TemporalDB runtime data (default TEMPORALDB_DATA_DIR / TEMPORALDB_BACKUP_DIR)
+/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
 # Editor/IDE
 # .idea/
 # .vscode/
