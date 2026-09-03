@@ -258,3 +258,85 @@ func TestReplayAsOfExcludesDeletedAndPicksVisibleVersion(t *testing.T) {
 		t.Fatalf("ReplayAsOf(t1) returned %d events, want 2 (both keys existed then)", len(got))
 	}
 }
+
+func TestAfterReturnsEventsAcrossCollections(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	e1, err := s.Append(ctx, "users", "1", temporal.OpPut, json.RawMessage(`{}`), nil, time.Time{})
+	if err != nil {
+		t.Fatalf("Append users/1: %v", err)
+	}
+	if _, err := s.Append(ctx, "orders", "1", temporal.OpPut, json.RawMessage(`{}`), nil, time.Time{}); err != nil {
+		t.Fatalf("Append orders/1: %v", err)
+	}
+	e3, err := s.Append(ctx, "users", "2", temporal.OpPut, json.RawMessage(`{}`), nil, time.Time{})
+	if err != nil {
+		t.Fatalf("Append users/2: %v", err)
+	}
+
+	got, err := s.After(ctx, e1.Seq)
+	if err != nil {
+		t.Fatalf("After: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("After(e1.Seq) returned %d events, want 2", len(got))
+	}
+	if got[0].Collection != "orders" || got[1].Collection != "users" || got[1].Key != "2" {
+		t.Errorf("got = %+v", got)
+	}
+	if got[len(got)-1].Seq != e3.Seq {
+		t.Errorf("last event seq = %d, want %d", got[len(got)-1].Seq, e3.Seq)
+	}
+
+	none, err := s.After(ctx, e3.Seq)
+	if err != nil {
+		t.Fatalf("After(latest): %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("After(latest seq) = %+v, want empty", none)
+	}
+}
+
+// TestRestoreEventPreservesOriginalTxTime is the whole point of
+// RestoreEvent existing: Append always stamps tx_time as "now", which
+// would silently corrupt AS-OF semantics for replayed history. This
+// proves RestoreEvent does not.
+func TestRestoreEventPreservesOriginalTxTime(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	original := temporal.Event{
+		Seq: 9001, Collection: "users", Key: "1", Op: temporal.OpPut,
+		Value:     json.RawMessage(`{"v":1}`),
+		ValidFrom: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+		TxTime:    time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+		Meta:      json.RawMessage(`{}`),
+	}
+	if err := s.RestoreEvent(ctx, original); err != nil {
+		t.Fatalf("RestoreEvent: %v", err)
+	}
+
+	hist, err := s.History(ctx, "users", "1")
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(hist) != 1 {
+		t.Fatalf("History returned %d events, want 1", len(hist))
+	}
+	if hist[0].Seq != 9001 {
+		t.Errorf("Seq = %d, want 9001 (the original, not autoincremented)", hist[0].Seq)
+	}
+	if !hist[0].TxTime.Equal(original.TxTime) {
+		t.Errorf("TxTime = %v, want %v (preserved, not time.Now())", hist[0].TxTime, original.TxTime)
+	}
+
+	// A normal Append afterwards must continue past the restored seq.
+	next, err := s.Append(ctx, "users", "2", temporal.OpPut, json.RawMessage(`{}`), nil, time.Time{})
+	if err != nil {
+		t.Fatalf("Append after restore: %v", err)
+	}
+	if next.Seq <= 9001 {
+		t.Errorf("Append after RestoreEvent(seq=9001) got seq %d, want > 9001", next.Seq)
+	}
+}

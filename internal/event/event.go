@@ -239,6 +239,96 @@ func (s *Store) ReplayAsOf(ctx context.Context, collection string, asOf, validAt
 	return out, nil
 }
 
+// After returns every event across ALL collections with Seq > seq, in
+// commit order. Used by internal/backup's streaming shipper to tail new
+// commits regardless of which collection they belong to.
+func (s *Store) After(ctx context.Context, seq int64) ([]temporal.Event, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT seq, collection, key, op, value, valid_from, tx_time, meta FROM events
+		WHERE seq > ? ORDER BY seq ASC`, seq)
+	if err != nil {
+		return nil, fmt.Errorf("event: after %d: %w", seq, err)
+	}
+	defer rows.Close()
+
+	var out []temporal.Event
+	for rows.Next() {
+		var e temporal.Event
+		var opS, validFromS, txTimeS string
+		var value, meta []byte
+		if err := rows.Scan(&e.Seq, &e.Collection, &e.Key, &opS, &value, &validFromS, &txTimeS, &meta); err != nil {
+			return nil, fmt.Errorf("event: scan after %d: %w", seq, err)
+		}
+		e.Op = temporal.Op(opS)
+		e.Value, e.Meta = value, meta
+		if e.ValidFrom, err = temporal.Parse(validFromS); err != nil {
+			return nil, err
+		}
+		if e.TxTime, err = temporal.Parse(txTimeS); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("event: after %d: %w", seq, err)
+	}
+	return out, nil
+}
+
+// RestoreEvent inserts one event exactly as given — including its
+// original Seq and TxTime — bypassing Append's normal "tx_time is always
+// now" and seq-autoincrement behavior. It exists ONLY for
+// internal/backup's Restore: replaying a shipped event log must preserve
+// the original commit time, or every AS-OF query against restored data
+// would be silently wrong. SQLite still accepts an explicit value for an
+// INTEGER PRIMARY KEY AUTOINCREMENT column and advances its internal
+// counter to match, so a later normal Append continues correctly after
+// the highest restored Seq.
+func (s *Store) RestoreEvent(ctx context.Context, e temporal.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("event: restore: begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	meta := e.Meta
+	if len(meta) == 0 {
+		meta = json.RawMessage("{}")
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO events (seq, collection, key, op, value, valid_from, tx_time, meta)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.Seq, e.Collection, e.Key, string(e.Op), nullBytes(e.Value),
+		temporal.Encode(e.ValidFrom), temporal.Encode(e.TxTime), string(meta),
+	); err != nil {
+		return fmt.Errorf("event: restore: insert events: %w", err)
+	}
+
+	deleted := 0
+	if e.Op == temporal.OpDelete {
+		deleted = 1
+	}
+	// The WHERE guard makes this safe even if callers ever replay
+	// out of seq order: live only ever reflects the highest Seq seen.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO live (collection, key, value, valid_from, tx_time, deleted, seq, meta)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(collection, key) DO UPDATE SET
+			value = excluded.value, valid_from = excluded.valid_from, tx_time = excluded.tx_time,
+			deleted = excluded.deleted, seq = excluded.seq, meta = excluded.meta
+		WHERE excluded.seq > live.seq`,
+		e.Collection, e.Key, nullBytes(e.Value),
+		temporal.Encode(e.ValidFrom), temporal.Encode(e.TxTime), deleted, e.Seq, string(meta),
+	); err != nil {
+		return fmt.Errorf("event: restore: upsert live: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 func nullBytes(b []byte) interface{} {
 	if len(b) == 0 {
 		return nil
