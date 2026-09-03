@@ -29,3 +29,20 @@ every collection rather than an inferred, typed schema per collection. Same numb
 Deferred from ADR-001 §D4. v1 grammar supports only `AND`-conjoined comparisons in `WHERE`. Revisit
 if a real query need surfaces that cannot be expressed as a conjunction (e.g. client-side `OR` via
 two `FIND` calls becomes a measured pain point).
+
+## §5 — Automatic embedding on `PUT`
+
+Deferred from ADR-001 §D6. `internal/vector.Index.Upsert(ctx, collection, key, text)` embeds and
+indexes one document and is fully implemented and tested; nothing calls it automatically from
+`PUT`. Wiring that up needs a per-collection "which fields to embed, with what template" config
+surface this ADR never designed, and no live Qdrant/TEI instance exists in this environment to
+verify a real design against (see ADR-001's Out of Scope). Revisit once vector search is used
+against a real corpus and the actual field-selection need is known, rather than guessed now.
+
+## §6 — Temporal `SEARCH ... AS OF`
+
+Deferred from ADR-001 §D6/§D4. `SEARCH`'s grammar has no `AS OF` clause; `execSearch` hydrates
+current state (`live`) only, unlike `GET`/`FIND`/`HISTORY`. A temporal search would need the
+vector index itself to be point-in-time aware (which version of a document's embedding was current
+at a past instant), which Qdrant does not natively version — revisit only if a real use case for
+"what would this search have found last month" surfaces.

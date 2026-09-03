@@ -234,19 +234,45 @@ Enabled only when both `QDRANT_URL` and `TEI_URL` are set (via process env or `.
 server is fully functional with neither set — `SEARCH` then returns a clear "vector search not
 configured" error rather than degrading silently. When enabled:
 
-- `PUT` on a collection configured with an `embed` field list calls TEI (`POST /embed`) for those
-  fields and upserts the resulting vector into Qdrant, point ID = `"<collection>/<key>"`, payload
-  = `{collection, key}` only (no document duplication — Qdrant is a derived index, TemporalDB
-  stays the source of truth and Qdrant is rebuildable from `live` by replay).
+- **One Qdrant collection per TemporalDB collection, same name** — corrected during implementation
+  from an earlier "single shared collection with a `collection` field in the payload" reading of
+  this section. Scoping by Qdrant's own collection concept means a Qdrant search is already scoped
+  correctly by picking the right Qdrant collection, and only the TemporalDB **key** — not the full
+  `"collection/key"` path — needs to travel in the payload.
+- **Point ID is a deterministic UUID derived from the key** (`uuid.NewSHA1(uuid.NameSpaceOID,
+  []byte(key))`, in `internal/vector.PointID`) — **also corrected during implementation**: Qdrant
+  requires a point ID to be a UUID or an unsigned integer, so the literal string
+  `"<collection>/<key>"` this section originally specified is not a valid Qdrant ID at all. The
+  derivation must be deterministic (not random) so re-indexing the same key updates its existing
+  point rather than creating a duplicate. Payload is `{key: <key>}` (no document duplication —
+  Qdrant is a derived index, TemporalDB stays the source of truth and Qdrant is rebuildable by
+  re-embedding every document).
+- `internal/vector.Index.Upsert(ctx, collection, key, text)` embeds text via TEI (`POST /embed`)
+  and upserts the resulting vector, creating the Qdrant collection first if needed. **Automatic
+  invocation on every `PUT` is explicitly not wired up in this pass** — doing so needs a
+  per-collection "which fields to embed" configuration surface this ADR never designed, and
+  building one untested (no live Qdrant/TEI instance exists in this environment, per Out of Scope)
+  would be exactly the speculative complexity the standing "Simplicity First" rule warns against.
+  `Index.Upsert` is real, correct, and tested against a mock TEI/Qdrant — a caller (an operator's
+  indexing job, or a future `PUT`-time hook once the field-selection design exists) can call it
+  today. See docs/adr/BACKLOG.md §5.
 - `SEARCH <collection> NEAR "text" [WHERE ...]` embeds the query text via TEI, queries Qdrant
-  (`POST /collections/<c>/points/search`) for nearest neighbours, then hydrates full temporal
-  documents from `live` (or `AS OF` from `events`) by the returned keys — so a vector search
-  composes with the exact same `WHERE`/`AS OF` machinery as `FIND`, which is the "same interface
-  as KG" requirement: graph, vector, and plain filtering all terminate in one executor
-  (`internal/tql/executor.go`) over one store.
-- If `TEI_RERANK_URL` is also set, results are reranked (`POST /rerank`) before hydration.
+  (`POST /collections/<c>/points/search`) for nearest neighbours, then hydrates full documents
+  from `live` by the returned keys, applying `WHERE` as a further SQL predicate scoped to that key
+  list (`internal/tql/executor.go`'s `execSearch`) — the same `json_extract` pushdown `FIND` uses,
+  just against a key list instead of a full collection scan. This is the "same interface as KG"
+  requirement: graph, vector, and plain filtering all terminate in one executor over one store.
+  TQL's `SEARCH` grammar (D4) has no `AS OF` clause, so this hydrates current state only — a
+  temporal `SEARCH ... AS OF` is not implemented (see docs/adr/BACKLOG.md §6 if wanted later).
+- If `TEI_RERANK_URL` is also set, `internal/vector.TEIClient.Rerank` (`POST /rerank`) is available
+  to score candidates before hydration — implemented and tested, not yet called from `execSearch`'s
+  own path (same reasoning as automatic indexing: no live TEI reranker to verify it against).
 - Both clients (`internal/vector/{qdrant,tei}.go`) are hand-rolled thin `net/http` wrappers over
-  the 2–3 REST endpoints actually used — no SDK dependency for an optional, small surface.
+  the 2–3 REST endpoints actually used — no SDK dependency for an optional, small surface. Verified
+  against mock HTTP servers standing in for the real APIs (13 tests), and against the real
+  `temporaldb-server` binary wired to fake-but-protocol-shaped Qdrant/TEI servers end to end:
+  `PUT` a document, `internal/vector.Index.Upsert` it, `SEARCH` over HTTP returns the hydrated
+  document.
 
 ### D7 — Backup: snapshot + streaming event-log shipping, with purge
 

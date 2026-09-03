@@ -23,6 +23,7 @@ import (
 	"github.com/atvirokodosprendimai/temporaldbv1/internal/server"
 	"github.com/atvirokodosprendimai/temporaldbv1/internal/storage"
 	"github.com/atvirokodosprendimai/temporaldbv1/internal/tql"
+	"github.com/atvirokodosprendimai/temporaldbv1/internal/vector"
 )
 
 func main() {
@@ -46,13 +47,15 @@ func run() error {
 	events := event.NewStore(db)
 	g := graph.NewStore(events, db)
 
-	// search stays nil until internal/vector is wired in (ADR-001 T10);
-	// SEARCH then reports a clear "not configured" error rather than the
-	// server failing to start.
+	// search stays nil (SEARCH then reports a clear "not configured"
+	// error) unless QDRANT_URL and TEI_URL are both set (ADR-001 D6).
 	var search tql.Searcher
 	if cfg.VectorEnabled() {
-		log.Print("temporaldb-server: QDRANT_URL/TEI_URL are set, but vector search wiring " +
-			"is not implemented yet (ADR-001 T10) - SEARCH will report not-configured")
+		search = vector.NewIndex(
+			vector.NewTEIClient(cfg.TEIURL, cfg.TEIRerankURL),
+			vector.NewQdrantClient(cfg.QdrantURL, cfg.QdrantAPIKey),
+		)
+		log.Printf("temporaldb-server: vector search enabled (qdrant %s, tei %s)", cfg.QdrantURL, cfg.TEIURL)
 	}
 	executor := tql.NewExecutor(db, events, g, search)
 
