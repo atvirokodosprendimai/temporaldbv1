@@ -316,6 +316,22 @@ func TestParseSearchWithWhere(t *testing.T) {
 	}
 }
 
+func TestParseEdgeTypes(t *testing.T) {
+	stmt, err := Parse(`EDGETYPES`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if _, ok := stmt.(*EdgeTypesStmt); !ok {
+		t.Fatalf("got %T, want *EdgeTypesStmt", stmt)
+	}
+}
+
+func TestParseEdgeTypesRejectsTrailingInput(t *testing.T) {
+	if _, err := Parse(`EDGETYPES users`); err == nil {
+		t.Error("Parse(EDGETYPES with trailing input) = nil error, want error")
+	}
+}
+
 func TestParsePurge(t *testing.T) {
 	stmt, err := Parse(`PURGE users BEFORE "2026-01-01"`)
 	if err != nil {

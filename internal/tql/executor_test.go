@@ -214,6 +214,26 @@ func TestExecRelateRelatedUnrelate(t *testing.T) {
 	}
 }
 
+func TestExecEdgeTypes(t *testing.T) {
+	ex := newExecutor(t, nil)
+	mustExec(t, ex, `RELATE users/1 -knows-> users/2`)
+	mustExec(t, ex, `RELATE users/1 -blocks-> users/3`)
+	mustExec(t, ex, `RELATE users/2 -knows-> users/3`)
+
+	res := mustExec(t, ex, `EDGETYPES`)
+	if len(res.EdgeTypes) != 2 || res.EdgeTypes[0] != "blocks" || res.EdgeTypes[1] != "knows" {
+		t.Fatalf("EdgeTypes = %v, want [blocks knows] (distinct, sorted)", res.EdgeTypes)
+	}
+}
+
+func TestExecEdgeTypesEmptyGraph(t *testing.T) {
+	ex := newExecutor(t, nil)
+	res := mustExec(t, ex, `EDGETYPES`)
+	if len(res.EdgeTypes) != 0 {
+		t.Errorf("EdgeTypes on an empty graph = %v, want empty", res.EdgeTypes)
+	}
+}
+
 func TestExecPurgeLeavesLiveIntact(t *testing.T) {
 	ex := newExecutor(t, nil)
 	mustExec(t, ex, `PUT users/1 {"v":1}`)

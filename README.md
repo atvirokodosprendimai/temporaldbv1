@@ -127,6 +127,13 @@ RELATED users/1 -knows-> LIMIT 5
 RELATED users/1 AS OF "2026-01-01" # the graph as it stood on that date
 ```
 
+`EDGETYPES` lists every distinct edge type currently in use, sorted — useful
+for discovering what relation vocabulary a graph actually contains:
+
+```
+EDGETYPES     # e.g. ["blocks","knows"]
+```
+
 ### Vector search: SEARCH (optional)
 
 `SEARCH` finds documents by meaning rather than exact match. It requires the
@@ -179,6 +186,7 @@ HISTORY  <collection>/<key> [BETWEEN <time> AND <time>]
 RELATE   <collection>/<key> -<edge-type>-> <collection>/<key> [<json-object>]
 UNRELATE <collection>/<key> -<edge-type>-> <collection>/<key>
 RELATED  <collection>/<key> [-<edge-type>->] [AS OF <time>] [LIMIT <n>]
+EDGETYPES
 SEARCH   <collection> NEAR "<text>" [WHERE <expr>] [LIMIT <n>]
 PURGE    <collection> BEFORE <time>
 
@@ -254,6 +262,11 @@ escape hatch for anything a typed tool below doesn't cover.
 and `TEI_URL` configured; otherwise the call errors, explaining that.
 - In: `{"collection": "...", "query": "...", "where": "<optional TQL WHERE clause, no WHERE keyword>", "limit": N}`
 - Out: `{"results": [<value>, ...]}`
+
+**`tql_edge_types`** — every distinct relation type currently in use across
+the whole graph, sorted.
+- In: `{}`
+- Out: `{"types": ["...", ...]}`
 
 None of these duplicate TQL-compilation logic — each is one call through the
 same `client.Client` the CLI uses, so the MCP surface can never drift from

@@ -59,9 +59,10 @@ type Edge struct {
 
 // Result is what one statement produced.
 type Result struct {
-	Rows   []ResultValue `json:"rows,omitempty"`
-	Edges  []Edge        `json:"edges,omitempty"`
-	Purged int64         `json:"purged,omitempty"`
+	Rows      []ResultValue `json:"rows,omitempty"`
+	Edges     []Edge        `json:"edges,omitempty"`
+	Purged    int64         `json:"purged,omitempty"`
+	EdgeTypes []string      `json:"edge_types,omitempty"`
 }
 
 // QueryResponse mirrors the server's response shape (ADR-001 D8): one
@@ -172,6 +173,16 @@ func (c *Client) History(ctx context.Context, collection, key string) ([]ResultV
 		return nil, err
 	}
 	return res.Rows, nil
+}
+
+// EdgeTypes returns every distinct edge type currently in use across the
+// whole graph, sorted.
+func (c *Client) EdgeTypes(ctx context.Context) ([]string, error) {
+	res, err := c.one(ctx, "EDGETYPES")
+	if err != nil {
+		return nil, err
+	}
+	return res.EdgeTypes, nil
 }
 
 // Search runs SEARCH against collection (ADR-001 D6 — requires the server

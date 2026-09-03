@@ -246,6 +246,13 @@ directly satisfies "documents + how they related" without a second storage subsy
 KG is not a separate database bolted on, it is what TQL's graph verbs compile to against the one
 store.
 
+**Addition (implementation, 2026-09-03): `EDGETYPES`.** A no-argument TQL verb returning every
+distinct edge type currently in use, sorted (`DISTINCT json_extract(meta,'$.type') FROM live`,
+scoped to `__edges__`) — added in response to a real need surfaced while using the graph: knowing
+what relation vocabulary a graph actually contains, without already knowing every type name to ask
+`RELATED ... -<type>->` about. Not a correction of anything above; the same `live` json_extract
+scan D4/D5 already describe, one more read-only verb over it.
+
 ### D6 — Vector search: optional, additive, never the source of truth
 
 Enabled only when both `QDRANT_URL` and `TEI_URL` are set (via process env or `.env`, §D12); the

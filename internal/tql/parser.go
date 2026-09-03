@@ -46,6 +46,8 @@ func Parse(src string) (Stmt, error) {
 		return p.parseSearch()
 	case "PURGE":
 		return p.parsePurge()
+	case "EDGETYPES":
+		return p.parseEdgeTypes()
 	default:
 		return nil, fmt.Errorf("tql: unknown command %q at position %d", verb.Text, verb.Pos)
 	}
@@ -564,4 +566,12 @@ func (p *parser) parsePurge() (Stmt, error) {
 		return nil, err
 	}
 	return &PurgeStmt{Collection: coll.Text, Before: *t}, nil
+}
+
+func (p *parser) parseEdgeTypes() (Stmt, error) {
+	p.next() // EDGETYPES
+	if err := p.expectEnd(); err != nil {
+		return nil, err
+	}
+	return &EdgeTypesStmt{}, nil
 }

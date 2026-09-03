@@ -132,6 +132,37 @@ func TestRelatedAsOf(t *testing.T) {
 	}
 }
 
+func TestEdgeTypes(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
+	mustRelate(t, s, ctx, "users", "1", "blocks", "users", "3", nil)
+	mustRelate(t, s, ctx, "users", "2", "knows", "users", "3", nil) // duplicate type, must not repeat
+
+	types, err := s.EdgeTypes(ctx)
+	if err != nil {
+		t.Fatalf("EdgeTypes: %v", err)
+	}
+	if len(types) != 2 || types[0] != "blocks" || types[1] != "knows" {
+		t.Fatalf("EdgeTypes = %v, want [blocks knows] (distinct, sorted)", types)
+	}
+}
+
+func TestEdgeTypesExcludesUnrelated(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustRelate(t, s, ctx, "users", "1", "knows", "users", "2", nil)
+	must(t, s.Unrelate(ctx, "users", "1", "knows", "users", "2"))
+
+	types, err := s.EdgeTypes(ctx)
+	if err != nil {
+		t.Fatalf("EdgeTypes: %v", err)
+	}
+	if len(types) != 0 {
+		t.Errorf("EdgeTypes after the only edge was unrelated = %v, want empty", types)
+	}
+}
+
 func TestRelatedLimit(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()

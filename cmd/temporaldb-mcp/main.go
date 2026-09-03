@@ -130,6 +130,17 @@ func registerTools(s *mcp.Server, c *client.Client) {
 		}
 		return nil, searchOut{Results: mvs}, nil
 	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "tql_edge_types",
+		Description: "List every distinct relation (edge) type currently in use across the whole graph, sorted.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ edgeTypesIn) (*mcp.CallToolResult, edgeTypesOut, error) {
+		types, err := c.EdgeTypes(ctx)
+		if err != nil {
+			return nil, edgeTypesOut{}, err
+		}
+		return nil, edgeTypesOut{Types: types}, nil
+	})
 }
 
 // value is TemporalDB's document shape re-expressed for MCP's JSON-schema
@@ -249,6 +260,11 @@ type historyIn struct {
 }
 type historyOut struct {
 	Versions []value `json:"versions"`
+}
+
+type edgeTypesIn struct{}
+type edgeTypesOut struct {
+	Types []string `json:"types"`
 }
 
 type searchIn struct {

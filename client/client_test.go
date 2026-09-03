@@ -96,6 +96,22 @@ func TestClientFind(t *testing.T) {
 	}
 }
 
+func TestClientEdgeTypes(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if _, err := c.Query(ctx, "RELATE users/1 -knows-> users/2\nRELATE users/1 -blocks-> users/3"); err != nil {
+		t.Fatalf("Query (seed relates): %v", err)
+	}
+
+	types, err := c.EdgeTypes(ctx)
+	if err != nil {
+		t.Fatalf("EdgeTypes: %v", err)
+	}
+	if len(types) != 2 || types[0] != "blocks" || types[1] != "knows" {
+		t.Fatalf("EdgeTypes = %v, want [blocks knows]", types)
+	}
+}
+
 func TestClientHistory(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()

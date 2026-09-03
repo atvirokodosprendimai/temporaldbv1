@@ -87,16 +87,21 @@ type PurgeStmt struct {
 	Before     time.Time
 }
 
-func (*GetStmt) stmt()      {}
-func (*FindStmt) stmt()     {}
-func (*PutStmt) stmt()      {}
-func (*DeleteStmt) stmt()   {}
-func (*HistoryStmt) stmt()  {}
-func (*RelateStmt) stmt()   {}
-func (*UnrelateStmt) stmt() {}
-func (*RelatedStmt) stmt()  {}
-func (*SearchStmt) stmt()   {}
-func (*PurgeStmt) stmt()    {}
+// EdgeTypesStmt is "EDGETYPES" — every distinct edge type currently in use
+// across the whole graph, sorted.
+type EdgeTypesStmt struct{}
+
+func (*GetStmt) stmt()       {}
+func (*FindStmt) stmt()      {}
+func (*PutStmt) stmt()       {}
+func (*DeleteStmt) stmt()    {}
+func (*HistoryStmt) stmt()   {}
+func (*RelateStmt) stmt()    {}
+func (*UnrelateStmt) stmt()  {}
+func (*RelatedStmt) stmt()   {}
+func (*SearchStmt) stmt()    {}
+func (*PurgeStmt) stmt()     {}
+func (*EdgeTypesStmt) stmt() {}
 
 // CmpOp is a WHERE-clause comparison operator (ADR-001 D4).
 type CmpOp string

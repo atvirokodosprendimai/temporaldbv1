@@ -86,6 +86,31 @@ func (s *Store) Unrelate(ctx context.Context, fromColl, fromKey, edgeType, toCol
 	return nil
 }
 
+// EdgeTypes returns every distinct edge type currently in use across the
+// whole graph, sorted.
+func (s *Store) EdgeTypes(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT json_extract(meta, '$.type') FROM live
+		WHERE collection = ? AND deleted = 0 ORDER BY 1`, EdgeCollection)
+	if err != nil {
+		return nil, fmt.Errorf("graph: edge types: %w", err)
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("graph: edge types: scan: %w", err)
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("graph: edge types: %w", err)
+	}
+	return out, nil
+}
+
 // Related returns current edges from (fromColl/fromKey), optionally
 // filtered to one edge type. The fast path: a direct json_extract scan of
 // live, no replay.

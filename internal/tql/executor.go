@@ -33,13 +33,14 @@ type ResultValue struct {
 
 // Result is what executing one statement produces. Which field is
 // populated depends on the statement kind: GET/FIND/PUT/HISTORY/SEARCH
-// use Rows, RELATE/UNRELATE/RELATED use Edges, PURGE uses Purged. DELETE
-// and UNRELATE leave everything empty — success is the absence of an
-// error.
+// use Rows, RELATE/UNRELATE/RELATED use Edges, PURGE uses Purged,
+// EDGETYPES uses EdgeTypes. DELETE and UNRELATE leave everything empty —
+// success is the absence of an error.
 type Result struct {
-	Rows   []ResultValue `json:"rows,omitempty"`
-	Edges  []graph.Edge  `json:"edges,omitempty"`
-	Purged int64         `json:"purged,omitempty"`
+	Rows      []ResultValue `json:"rows,omitempty"`
+	Edges     []graph.Edge  `json:"edges,omitempty"`
+	Purged    int64         `json:"purged,omitempty"`
+	EdgeTypes []string      `json:"edge_types,omitempty"`
 }
 
 // Executor runs parsed TQL statements. Events and Graph share the
@@ -81,6 +82,8 @@ func (ex *Executor) Exec(ctx context.Context, stmt Stmt) (Result, error) {
 		return ex.execSearch(ctx, s)
 	case *PurgeStmt:
 		return ex.execPurge(ctx, s)
+	case *EdgeTypesStmt:
+		return ex.execEdgeTypes(ctx, s)
 	default:
 		return Result{}, fmt.Errorf("tql: exec: unhandled statement type %T", stmt)
 	}
@@ -342,4 +345,12 @@ func (ex *Executor) execPurge(ctx context.Context, s *PurgeStmt) (Result, error)
 		return Result{}, fmt.Errorf("tql: purge: %w", err)
 	}
 	return Result{Purged: n}, nil
+}
+
+func (ex *Executor) execEdgeTypes(ctx context.Context, _ *EdgeTypesStmt) (Result, error) {
+	types, err := ex.Graph.EdgeTypes(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{EdgeTypes: types}, nil
 }
