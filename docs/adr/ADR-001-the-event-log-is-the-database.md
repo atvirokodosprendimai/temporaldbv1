@@ -272,10 +272,22 @@ Two complementary mechanisms, both driven off facts already true of the design (
 
 ### D8 — Server: HTTP, one transport, TQL text is the wire protocol
 
-`net/http` + `chi`. `POST /query` — request body is raw TQL (newline-separated for a batch,
-executed as one transaction); response is JSON. `GET /healthz`. `GET /backup/status`. No second,
-binary wire protocol — the query language *is* the interface, so there is exactly one thing to
-keep readable and one thing for the client, curl, and MCP to all speak.
+`net/http` + `chi`. `POST /query` — request body is raw TQL (newline-separated for a batch);
+response is JSON, `{"results":[...], "error"?: "..."}`. `GET /healthz`. No second, binary wire
+protocol — the query language *is* the interface, so there is exactly one thing to keep readable
+and one thing for the client, curl, and MCP to all speak.
+
+**Correction (implementation, 2026-09-03): a batch is NOT one shared transaction.** This section
+originally said a newline-separated batch executes "as one transaction". Building the executor
+(D4) revealed that would require threading an externally-supplied `*sql.Tx` through every
+`exec*` method and through `event.Store.Append`'s own transaction management — a real refactor
+of the single-writer path (D13) — for a guarantee nothing in the original ask actually requested.
+Statements in a batch instead run **sequentially, each in its own transaction** (same as sending
+them as separate requests): execution stops at the first statement that errors, and the response
+still carries every result collected before that point, so a caller can tell how far a script
+got. `GET /backup/status` is also removed from this list — added speculatively here, it is
+covered by D7's backup mechanism and belongs with that implementation (T7), not invented ahead of
+it.
 
 ### D9 — Client package: a reference implementation of the wire protocol, nothing more
 
