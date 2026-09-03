@@ -3,6 +3,7 @@ module github.com/atvirokodosprendimai/temporaldbv1
 go 1.26.7
 
 require (
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/joho/godotenv v1.5.1
 	github.com/pressly/goose/v3 v3.28.0
 	modernc.org/sqlite v1.58.0

@@ -1,0 +1,142 @@
+package client
+
+import (
+	"context"
+	"encoding/json"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/atvirokodosprendimai/temporaldbv1/internal/event"
+	"github.com/atvirokodosprendimai/temporaldbv1/internal/graph"
+	"github.com/atvirokodosprendimai/temporaldbv1/internal/server"
+	"github.com/atvirokodosprendimai/temporaldbv1/internal/storagetest"
+	"github.com/atvirokodosprendimai/temporaldbv1/internal/tql"
+)
+
+// newTestClient wires the real server (and everything under it) and
+// returns a Client pointed at an httptest server — an end-to-end test of
+// the actual wire protocol, not a mock.
+func newTestClient(t *testing.T) *Client {
+	t.Helper()
+	db := storagetest.DB(t)
+	t.Cleanup(func() { storagetest.Reset(t, db) })
+	es := event.NewStore(db)
+	ex := tql.NewExecutor(db, es, graph.NewStore(es, db), nil)
+	ts := httptest.NewServer(server.New(ex))
+	t.Cleanup(ts.Close)
+	return New(ts.URL)
+}
+
+// mustPut Puts and fails the test on error - a value-returning call like
+// Put cannot be wrapped by a generic must(t, val, err) helper alongside a
+// separate t argument (Go's multi-value-call special case only applies
+// when the multi-valued call is the function's SOLE argument).
+func mustPut(t *testing.T, c *Client, ctx context.Context, collection, key string, value json.RawMessage) {
+	t.Helper()
+	if _, err := c.Put(ctx, collection, key, value); err != nil {
+		t.Fatalf("Put(%s/%s): %v", collection, key, err)
+	}
+}
+
+func TestClientPutGet(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+
+	if _, err := c.Put(ctx, "users", "1", json.RawMessage(`{"name":"Ada"}`)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := c.Get(ctx, "users", "1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil || string(got.Value) != `{"name":"Ada"}` {
+		t.Fatalf("Get = %v", got)
+	}
+}
+
+func TestClientGetMissing(t *testing.T) {
+	c := newTestClient(t)
+	got, err := c.Get(context.Background(), "users", "nope")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != nil {
+		t.Errorf("Get(missing) = %+v, want nil", got)
+	}
+}
+
+func TestClientDelete(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	mustPut(t, c, ctx, "users", "1", json.RawMessage(`{}`))
+	if err := c.Delete(ctx, "users", "1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	got, err := c.Get(ctx, "users", "1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != nil {
+		t.Errorf("Get after Delete = %+v, want nil", got)
+	}
+}
+
+func TestClientFind(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	mustPut(t, c, ctx, "users", "1", json.RawMessage(`{"age":30}`))
+	mustPut(t, c, ctx, "users", "2", json.RawMessage(`{"age":20}`))
+
+	rows, err := c.Find(ctx, "users", `WHERE age > 25`)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Key != "1" {
+		t.Fatalf("Find = %+v", rows)
+	}
+}
+
+func TestClientHistory(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	mustPut(t, c, ctx, "users", "1", json.RawMessage(`{"v":1}`))
+	mustPut(t, c, ctx, "users", "1", json.RawMessage(`{"v":2}`))
+
+	hist, err := c.History(ctx, "users", "1")
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(hist) != 2 {
+		t.Fatalf("History = %d entries, want 2", len(hist))
+	}
+}
+
+// TestClientHyphenatedKeyRoundTrips exercises quoteKeyIfNeeded end to end:
+// a UUID key must survive Put -> TQL text -> parse -> execute -> Get.
+func TestClientHyphenatedKeyRoundTrips(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	key := "550e8400-e29b-41d4-a716-446655440000"
+
+	if _, err := c.Put(ctx, "users", key, json.RawMessage(`{"a":1}`)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := c.Get(ctx, "users", key)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil || got.Key != key {
+		t.Fatalf("Get = %v, want key %q", got, key)
+	}
+}
+
+func TestClientQueryReportsParseError(t *testing.T) {
+	c := newTestClient(t)
+	qr, err := c.Query(context.Background(), "BOGUS x")
+	if err != nil {
+		t.Fatalf("Query (transport-level error): %v", err)
+	}
+	if qr.Error == "" {
+		t.Error("Error = empty, want a parse error message")
+	}
+}
