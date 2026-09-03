@@ -16,6 +16,9 @@ func TestLoadDefaults(t *testing.T) {
 	if c.BackupInterval != 30*time.Second {
 		t.Errorf("BackupInterval = %v, want 30s", c.BackupInterval)
 	}
+	if c.SnapshotInterval != time.Hour {
+		t.Errorf("SnapshotInterval = %v, want 1h", c.SnapshotInterval)
+	}
 	if c.VectorEnabled() {
 		t.Errorf("VectorEnabled() = true with no QDRANT_URL/TEI_URL set")
 	}

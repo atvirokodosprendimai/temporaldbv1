@@ -12,15 +12,16 @@ import (
 
 // Config holds every runtime setting TemporalDB reads at startup.
 type Config struct {
-	Addr           string
-	DataDir        string
-	BackupDir      string
-	BackupInterval time.Duration
-	Retention      time.Duration // 0 disables purge-by-age
-	QdrantURL      string
-	QdrantAPIKey   string
-	TEIURL         string
-	TEIRerankURL   string
+	Addr             string
+	DataDir          string
+	BackupDir        string
+	BackupInterval   time.Duration
+	SnapshotInterval time.Duration // periodic full-snapshot cadence; separate from BackupInterval's streaming-ship cadence
+	Retention        time.Duration // 0 disables purge-by-age
+	QdrantURL        string
+	QdrantAPIKey     string
+	TEIURL           string
+	TEIRerankURL     string
 }
 
 // VectorEnabled reports whether vector search is configured. Per ADR-001 D6,
@@ -56,6 +57,9 @@ func Load() (Config, error) {
 
 	var err error
 	if c.BackupInterval, err = getDuration("TEMPORALDB_BACKUP_INTERVAL", 30*time.Second); err != nil {
+		return Config{}, err
+	}
+	if c.SnapshotInterval, err = getDuration("TEMPORALDB_SNAPSHOT_INTERVAL", time.Hour); err != nil {
 		return Config{}, err
 	}
 	if c.Retention, err = getDuration("TEMPORALDB_RETENTION", 0); err != nil {
