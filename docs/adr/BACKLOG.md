@@ -46,3 +46,15 @@ current state (`live`) only, unlike `GET`/`FIND`/`HISTORY`. A temporal search wo
 vector index itself to be point-in-time aware (which version of a document's embedding was current
 at a past instant), which Qdrant does not natively version — revisit only if a real use case for
 "what would this search have found last month" surfaces.
+
+## §7 — `internal/event/event.go`'s row-scan-and-parse duplication
+
+Advisory, from independent review, 2026-09-03. `History`, `ReplayAsOf`, and `After` each
+independently repeat the same tail: scan a row into `op`/`value`/`valid_from`/`tx_time`/`meta`
+columns, then call `temporal.Parse` on both time columns. Pure duplication, zero functional
+risk — each copy is correct and already covered by existing tests. Not fixed now because it is
+style-only and outside the scope of the review pass that found it (PURGE-to-backup wiring and
+the connection-pool cap, both blocking); revisit opportunistically next time one of these three
+methods is touched for another reason, factoring the scan-and-parse tail into one shared helper
+(e.g. `func scanEvent(rows *sql.Rows, withCollectionKey bool) (temporal.Event, error)`, or similar
+— the three call sites don't scan identical column sets, so the helper needs to accommodate that).
